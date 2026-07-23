@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"agent-chat/internal/application/knowledgeretrieve"
 	domain "agent-chat/internal/domain/knowledge"
 	"agent-chat/internal/infrastructure/persistence"
 	knowledgepg "agent-chat/internal/infrastructure/persistence/knowledge"
@@ -73,10 +74,14 @@ func TestIndexerLifecycleAgainstPostgres(t *testing.T) {
 	if source.Status != domain.IndexStatusReady || !source.Active {
 		t.Fatalf("unexpected indexed source: %#v", source)
 	}
-	results, err := repository.SearchActiveChunks(ctx, domain.SearchQuery{
+	retrievalService, err := knowledgeretrieve.NewService(repository, embedder)
+	if err != nil {
+		t.Fatalf("create retrieval service: %v", err)
+	}
+	results, err := retrievalService.Retrieve(ctx, knowledgeretrieve.Request{
 		KnowledgeBaseID:   base.ID,
-		EmbeddingIdentity: identity,
-		Embedding:         integrationVector(),
+		Query:             "如何重置密码？",
+		Metadata:          map[string]any{"locale": "zh-CN"},
 		Limit:             5,
 		MinimumSimilarity: 0.5,
 	})
@@ -182,10 +187,4 @@ func integrationVersion(
 		ContentSHA256:     domain.ContentChecksum(content),
 		EmbeddingIdentity: identity,
 	}
-}
-
-func integrationVector() []float64 {
-	vector := make([]float64, 1024)
-	vector[0] = 1
-	return vector
 }

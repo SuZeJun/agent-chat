@@ -99,6 +99,18 @@ cmd/worker/main.go
 | `internal/application/knowledgeindex/indexer_test.go` | 验证幂等、批处理和错误分类 |
 | `internal/application/knowledgeindex/indexer_integration_test.go` | 使用真实 PostgreSQL 验证索引、检索和乱序发布 |
 | `internal/application/knowledgeindex/testdata/chunking_cases.json` | 固定 FAQ/Markdown 切片 Eval Case |
+| `internal/application/knowledgeretrieve/doc.go` | Knowledge Retrieval Application 包说明 |
+| `internal/application/knowledgeretrieve/service.go` | 编排问题 embedding、向量空间校验和活动切片检索 |
+| `internal/application/knowledgeretrieve/service_test.go` | 验证请求、空结果、过滤、错误分类和检索 Eval Case |
+| `internal/application/knowledgeretrieve/testdata/retrieval_cases.json` | 固定来源期望和元数据过滤检索 Eval Case |
+
+## Agent Runtime
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/agent/retrieval/doc.go` | Eino Knowledge Retriever 包说明 |
+| `internal/agent/retrieval/retriever.go` | 将 Application 检索结果适配为带来源和分数的 Eino Document |
+| `internal/agent/retrieval/retriever_test.go` | 验证 Eino Options、资源绑定、防覆盖和 Document 映射 |
 
 ## Knowledge Persistence
 

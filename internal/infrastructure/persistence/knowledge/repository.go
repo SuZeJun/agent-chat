@@ -544,7 +544,10 @@ func (repository *Repository) SearchActiveChunks(
 			document.title,
 			chunk.content,
 			chunk.metadata,
-			1 - (chunk.embedding <=> $2::vector) AS similarity
+			GREATEST(
+				-1.0,
+				LEAST(1.0, 1 - (chunk.embedding <=> $2::vector))
+			) AS similarity
 		FROM knowledge_bases AS base
 		JOIN knowledge_documents AS document
 		  ON document.knowledge_base_id = base.id

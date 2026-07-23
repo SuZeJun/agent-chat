@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -305,8 +306,10 @@ func (query SearchQuery) Validate() error {
 	if query.Limit <= 0 || query.Limit > 100 {
 		return fmt.Errorf("search limit must be between 1 and 100")
 	}
-	if query.MinimumSimilarity < -1 || query.MinimumSimilarity > 1 {
-		return fmt.Errorf("minimum similarity must be between -1 and 1")
+	if query.MinimumSimilarity < -1 || query.MinimumSimilarity > 1 ||
+		math.IsNaN(query.MinimumSimilarity) ||
+		math.IsInf(query.MinimumSimilarity, 0) {
+		return fmt.Errorf("minimum similarity must be a finite value between -1 and 1")
 	}
 	return nil
 }
@@ -331,6 +334,42 @@ type SearchResult struct {
 	Similarity float64
 	// Rank 是从一开始的返回顺序。
 	Rank int
+}
+
+// Validate 校验 Retriever 向上层返回的来源、分数和排序信息。
+func (result SearchResult) Validate() error {
+	if err := validateID("chunk ID", result.ChunkID); err != nil {
+		return err
+	}
+	if err := validateID("document ID", result.DocumentID); err != nil {
+		return err
+	}
+	if err := validateID("version ID", result.VersionID); err != nil {
+		return err
+	}
+	switch result.DocumentType {
+	case DocumentTypeFAQ, DocumentTypeMarkdown:
+	default:
+		return fmt.Errorf("invalid document type %q", result.DocumentType)
+	}
+	if strings.TrimSpace(result.Title) == "" || len(result.Title) > maxTitleLength {
+		return fmt.Errorf("result title must be 1-%d characters", maxTitleLength)
+	}
+	if strings.TrimSpace(result.Content) == "" {
+		return fmt.Errorf("result content must not be blank")
+	}
+	if result.Similarity < -1 || result.Similarity > 1 ||
+		math.IsNaN(result.Similarity) ||
+		math.IsInf(result.Similarity, 0) {
+		return fmt.Errorf("result similarity must be a finite value between -1 and 1")
+	}
+	if result.Rank <= 0 {
+		return fmt.Errorf("result rank must be greater than zero")
+	}
+	if _, err := json.Marshal(result.Metadata); err != nil {
+		return fmt.Errorf("result metadata must be valid JSON")
+	}
+	return nil
 }
 
 func validateID(name string, value string) error {

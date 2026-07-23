@@ -187,6 +187,16 @@ Agent Runtime 不拥有：
 - 超长结构块使用 120 rune 重叠窗口，避免边界事实完全断开。
 - Worker 按 64 条一批调用 embedding Provider，切片 ID 由版本和位置稳定生成。
 
+Eino Retriever 边界：
+
+- 构造时绑定服务端授权后的知识库 ID，调用级 `Index` 只能省略或传入同值。
+- 禁止调用级覆盖 Embedder，查询和索引始终使用同一 `provider + model + dimensions`。
+- `TopK` 限制为 1-100，相似度阈值必须是 -1 到 1 之间的有限值。
+- `DSLInfo` 只接受 `metadata` JSON 包含过滤，不接收 SQL 或任意表达式。
+- 服务端必需过滤条件不可被调用级参数覆盖，且在构造时深拷贝。
+- Eino `Document` 保存 chunk、document、version、类型、标题、分数和排序，供后续引用与 Trace 使用。
+- 当前组件已保留 Trace 所需输出；真正的节点耗时与上下文采用情况将在 RAG Graph Callback 阶段持久化。
+
 ### 5.2 首版不采用
 
 - 多 Agent 自主协作

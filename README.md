@@ -14,6 +14,7 @@
 - 文档版本与 `knowledge.index` Job 的事务性创建
 - 基于 `FOR UPDATE SKIP LOCKED` 的持久化 Job 领取、有界重试和锁超时恢复
 - `knowledge.index` Handler 批量生成 embedding、写入切片并单调发布最新版本
+- 服务端绑定知识库、支持 Top-K/阈值/元数据过滤的 Eino Retriever
 - 带 advisory lock、文件名和 SHA-256 校验的事务迁移
 - `/healthz` 与 `/readyz`
 - 结构化日志、服务端请求 ID、受控 panic 恢复和优雅退出
@@ -87,7 +88,8 @@ docker compose config --quiet
 
 ```text
 FAQ 导入与索引（已完成）
-  -> Eino Retriever
+  -> Eino Retriever（已完成）
+  -> Eino RAG Graph
   -> Answerability Gate
   -> 带引用流式回答
   -> Trace

@@ -32,6 +32,9 @@
 FAQ/Markdown 切片 Eval Case 位于 `internal/application/knowledgeindex/testdata/chunking_cases.json`，
 由 `chunker_test.go` 直接读取。切片规则变化必须同步更新用例和预期结果，避免无意改变检索语义。
 
+检索 Eval Case 位于 `internal/application/knowledgeretrieve/testdata/retrieval_cases.json`，
+固定问题、Top-K、阈值、元数据过滤和期望来源；由 `service_test.go` 验证 Application 检索契约。
+
 ### 2.2 离线数据集
 
 固定输入、期望行为和知识来源，运行真实检索与模型。
