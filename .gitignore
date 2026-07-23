@@ -1,0 +1,14 @@
+.env
+.agents/
+.codex-docs-cache/
+.gocache/
+.gomodcache/
+.gotmp/
+.idea/
+.vscode/
+bin/
+*.exe
+coverage.out
+evals/reports/
+web/.next/
+web/node_modules/
