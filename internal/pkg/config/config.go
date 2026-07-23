@@ -250,10 +250,8 @@ func (cfg Config) validate() error {
 	if cfg.Models.Embedding.Model != defaultEmbeddingModel {
 		return fmt.Errorf("EMBEDDING_MODEL must be embedding-3")
 	}
-	switch cfg.Models.Embedding.Dimensions {
-	case 256, 512, 1024:
-	default:
-		return fmt.Errorf("EMBEDDING_DIM must be one of 256, 512, or 1024 for pgvector HNSW")
+	if cfg.Models.Embedding.Dimensions != defaultEmbeddingDimensions {
+		return fmt.Errorf("EMBEDDING_DIM must be 1024")
 	}
 	if cfg.Models.Embedding.Timeout <= 0 {
 		return fmt.Errorf("EMBEDDING_TIMEOUT must be greater than zero")

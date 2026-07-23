@@ -8,13 +8,16 @@
 - PostgreSQL + pgvector
 - DeepSeek V4 Flash Eino ChatModel 适配
 - 智谱 Embedding-3 Eino Embedder 适配
+- FAQ/Markdown 逻辑文档、不可变版本和活动版本原子切换
+- 固定 1024 维的知识切片与 pgvector HNSW cosine 索引
+- 文档版本与 `knowledge.index` Job 的事务性创建
 - 带 advisory lock、文件名和 SHA-256 校验的事务迁移
 - `/healthz` 与 `/readyz`
 - 结构化日志、服务端请求 ID、受控 panic 恢复和优雅退出
 - 带状态约束、重试约束和部分索引的 Job 基础表
 - Go 单元测试、PostgreSQL 集成测试和 GitHub Actions
 
-当前 Worker 只验证进程生命周期和数据库连接，不领取或执行 Job；持久化任务消费属于后续里程碑。
+当前 Worker 只验证进程生命周期和数据库连接；创建文档版本时已经持久化 `knowledge.index` Job，但 Worker 尚未领取或执行该任务。
 
 ## 本地启动
 

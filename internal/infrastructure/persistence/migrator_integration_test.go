@@ -79,7 +79,7 @@ func TestMigrateAgainstPostgres(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 1 {
+	if migrationCount != 2 {
 		t.Fatalf("unexpected migration count: %d", migrationCount)
 	}
 

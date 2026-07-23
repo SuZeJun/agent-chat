@@ -52,7 +52,7 @@ func TestLoadParsesOverrides(t *testing.T) {
 		"EMBEDDING_API_KEY":          "embedding-key",
 		"EMBEDDING_BASE_URL":         "https://embedding.example.com/v1",
 		"EMBEDDING_MODEL":            "embedding-3",
-		"EMBEDDING_DIM":              "512",
+		"EMBEDDING_DIM":              "1024",
 		"EMBEDDING_TIMEOUT":          "8s",
 	}
 	cfg, err := load(func(key string) (string, bool) {
@@ -80,7 +80,7 @@ func TestLoadParsesOverrides(t *testing.T) {
 	if cfg.Models.Chat.Timeout != 15*time.Second {
 		t.Fatalf("unexpected chat model timeout: %s", cfg.Models.Chat.Timeout)
 	}
-	if cfg.Models.Embedding.APIKey != "embedding-key" || cfg.Models.Embedding.Dimensions != 512 {
+	if cfg.Models.Embedding.APIKey != "embedding-key" || cfg.Models.Embedding.Dimensions != 1024 {
 		t.Fatalf("unexpected embedding config: %#v", cfg.Models.Embedding)
 	}
 	if cfg.Models.Embedding.Timeout != 8*time.Second {
@@ -98,7 +98,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "duration", key: "SHUTDOWN_TIMEOUT", value: "later"},
 		{name: "connections", key: "DATABASE_MAX_OPEN_CONNS", value: "0"},
 		{name: "thinking", key: "LLM_THINKING", value: "sometimes"},
-		{name: "embedding dimensions", key: "EMBEDDING_DIM", value: "2048"},
+		{name: "embedding dimensions", key: "EMBEDDING_DIM", value: "512"},
 		{name: "chat model", key: "LLM_MODEL", value: "unknown-model"},
 		{name: "embedding model", key: "EMBEDDING_MODEL", value: "embedding-2"},
 		{name: "environment", key: "APP_ENV", value: "prod"},

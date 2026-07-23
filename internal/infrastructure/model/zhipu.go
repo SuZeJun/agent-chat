@@ -65,10 +65,8 @@ func newZhipuEmbedder(cfg config.EmbeddingModel, client *http.Client) (*ZhipuEmb
 	if cfg.Model != "embedding-3" {
 		return nil, fmt.Errorf("create Zhipu Embedder: EMBEDDING_MODEL must be embedding-3")
 	}
-	switch cfg.Dimensions {
-	case 256, 512, 1024:
-	default:
-		return nil, fmt.Errorf("create Zhipu Embedder: unsupported embedding dimensions %d", cfg.Dimensions)
+	if cfg.Dimensions != 1024 {
+		return nil, fmt.Errorf("create Zhipu Embedder: EMBEDDING_DIM must be 1024")
 	}
 	if cfg.Timeout <= 0 {
 		return nil, fmt.Errorf("create Zhipu Embedder: EMBEDDING_TIMEOUT must be greater than zero")

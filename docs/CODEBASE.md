@@ -75,6 +75,23 @@ cmd/worker/main.go
 | `internal/infrastructure/persistence/migrator_test.go` | 验证迁移文件解析、排序和空文件拒绝 |
 | `internal/infrastructure/persistence/migrator_integration_test.go` | 使用真实 PostgreSQL 验证并发、幂等、回滚和约束 |
 
+## Knowledge Domain
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/domain/knowledge/doc.go` | Knowledge Domain 包职责说明 |
+| `internal/domain/knowledge/model.go` | 定义知识库、文档、不可变版本、切片、Embedding 身份和检索结果 |
+| `internal/domain/knowledge/repository.go` | 定义版本写入、索引完成、原子发布和活动切片检索 Port |
+| `internal/domain/knowledge/model_test.go` | 验证内容校验和、向量有限值和 Embedding 身份比较 |
+
+## Knowledge Persistence
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/infrastructure/persistence/knowledge/doc.go` | Knowledge PostgreSQL Repository 包说明 |
+| `internal/infrastructure/persistence/knowledge/repository.go` | 实现版本与 Job 原子创建、切片替换、发布和 pgvector 检索 |
+| `internal/infrastructure/persistence/knowledge/repository_integration_test.go` | 使用真实 PostgreSQL 验证版本生命周期、原子回滚和活动版本检索 |
+
 ## Worker
 
 | 文件 | 职责 |
@@ -83,7 +100,7 @@ cmd/worker/main.go
 | `internal/infrastructure/jobs/worker.go` | 管理 Worker 轮询生命周期和数据库心跳 |
 | `internal/infrastructure/jobs/worker_test.go` | 验证 Worker 能响应 Context 取消 |
 
-当前 Worker 尚未领取和执行持久化 Job，这部分属于后续里程碑。
+当前 Worker 尚未领取和执行持久化 Job；`knowledge.index` Job 已由 Knowledge Repository 创建。
 
 ## 通用包
 
@@ -102,6 +119,7 @@ cmd/worker/main.go
 | `migrations/doc.go` | Migrations 包职责说明 |
 | `migrations/embed.go` | 使用 `go:embed` 将 SQL 迁移打入二进制 |
 | `migrations/000001_init.sql` | 创建 pgvector 扩展、Job 表、约束和索引 |
+| `migrations/000002_knowledge.sql` | 创建知识库、文档版本、1024 维切片、活动版本约束和 HNSW 索引 |
 
 已经提交或执行的迁移文件不可直接改写；后续 Schema 变化必须新增版本文件。
 

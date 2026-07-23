@@ -171,6 +171,14 @@ Agent Runtime 不拥有：
 - Provider 配置位于通用 Config，Eino 和供应商协议实现仅位于 Infrastructure/Agent 边界。
 - API Key 仅通过环境变量注入，不进入日志、Trace、错误正文或持久化配置。
 
+知识版本发布使用逻辑文档的 `active_version_id`：
+
+- 新版本创建和 `knowledge.index` Job 写入处于同一事务。
+- 切片替换和版本变为 `ready` 处于同一事务。
+- 只有属于当前文档且状态为 `ready` 的版本可以成为活动版本。
+- 新版本发布前，旧活动版本继续参与检索；发布后检索只连接新的活动版本。
+- 检索事务先校验所有活动版本的 Embedding 身份，再执行 pgvector 查询，避免同维度不同模型静默混用。
+
 ### 5.2 首版不采用
 
 - 多 Agent 自主协作

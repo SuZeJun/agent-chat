@@ -34,12 +34,12 @@ func TestZhipuEmbedderReturnsVectorsInInputOrder(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 			t.Errorf("decode request body: %v", err)
 		}
-		if payload.Model != "embedding-3" || payload.Dimensions != 256 {
+		if payload.Model != "embedding-3" || payload.Dimensions != 1024 {
 			t.Errorf("unexpected request payload: %#v", payload)
 		}
-		firstVector := make([]float64, 256)
+		firstVector := make([]float64, 1024)
 		firstVector[0] = 1
-		secondVector := make([]float64, 256)
+		secondVector := make([]float64, 1024)
 		secondVector[0] = 2
 		writer.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(writer).Encode(embeddingResponse{
@@ -57,7 +57,7 @@ func TestZhipuEmbedderReturnsVectorsInInputOrder(t *testing.T) {
 		APIKey:     "test-key",
 		BaseURL:    server.URL,
 		Model:      "embedding-3",
-		Dimensions: 256,
+		Dimensions: 1024,
 		Timeout:    time.Second,
 	}, server.Client())
 	if err != nil {
@@ -74,7 +74,7 @@ func TestZhipuEmbedderReturnsVectorsInInputOrder(t *testing.T) {
 	if identity := embedder.Identity(); identity != (EmbeddingIdentity{
 		Provider:   "zhipu",
 		Model:      "embedding-3",
-		Dimensions: 256,
+		Dimensions: 1024,
 	}) {
 		t.Fatalf("unexpected embedding identity: %#v", identity)
 	}
