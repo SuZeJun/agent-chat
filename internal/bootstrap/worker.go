@@ -15,11 +15,19 @@ func RunWorker(ctx context.Context, output io.Writer) error {
 	}
 	defer runtime.close()
 
-	worker := jobs.NewWorker(
-		runtime.logger,
-		runtime.database,
-		runtime.config.Worker.PollInterval,
-		runtime.config.Database.PingTimeout,
-	)
+	worker, err := jobs.NewWorker(jobs.WorkerOptions{
+		Logger:         runtime.logger,
+		Queue:          jobs.NewPostgresQueue(runtime.database),
+		Handlers:       map[string]jobs.Handler{},
+		WorkerID:       runtime.config.Worker.ID,
+		PollInterval:   runtime.config.Worker.PollInterval,
+		JobTimeout:     runtime.config.Worker.JobTimeout,
+		LockTimeout:    runtime.config.Worker.LockTimeout,
+		RetryBaseDelay: runtime.config.Worker.RetryBaseDelay,
+		RetryMaxDelay:  runtime.config.Worker.RetryMaxDelay,
+	})
+	if err != nil {
+		return err
+	}
 	return worker.Run(ctx)
 }

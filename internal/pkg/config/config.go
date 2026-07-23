@@ -21,6 +21,10 @@ const (
 	defaultDatabasePingTimeout  = 2 * time.Second
 	defaultMigrationTimeout     = 30 * time.Second
 	defaultWorkerPollInterval   = 2 * time.Second
+	defaultWorkerJobTimeout     = 2 * time.Minute
+	defaultWorkerLockTimeout    = 5 * time.Minute
+	defaultWorkerRetryBaseDelay = 2 * time.Second
+	defaultWorkerRetryMaxDelay  = time.Minute
 	defaultLLMTimeout           = 60 * time.Second
 	defaultEmbeddingTimeout     = 30 * time.Second
 	defaultDatabaseMaxOpenConns = int32(10)
@@ -76,9 +80,14 @@ type EmbeddingModel struct {
 	Timeout    time.Duration
 }
 
-// Worker 定义后台任务轮询配置。
+// Worker 定义后台任务轮询、执行租约和重试配置。
 type Worker struct {
-	PollInterval time.Duration
+	ID             string
+	PollInterval   time.Duration
+	JobTimeout     time.Duration
+	LockTimeout    time.Duration
+	RetryBaseDelay time.Duration
+	RetryMaxDelay  time.Duration
 }
 
 type lookupFunc func(string) (string, bool)
@@ -137,7 +146,12 @@ func load(lookup lookupFunc) (Config, error) {
 			},
 		},
 		Worker: Worker{
-			PollInterval: defaultWorkerPollInterval,
+			ID:             valueOrDefault(lookup, "WORKER_ID", ""),
+			PollInterval:   defaultWorkerPollInterval,
+			JobTimeout:     defaultWorkerJobTimeout,
+			LockTimeout:    defaultWorkerLockTimeout,
+			RetryBaseDelay: defaultWorkerRetryBaseDelay,
+			RetryMaxDelay:  defaultWorkerRetryMaxDelay,
 		},
 	}
 
@@ -152,6 +166,18 @@ func load(lookup lookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Worker.PollInterval, err = durationValue(lookup, "WORKER_POLL_INTERVAL", cfg.Worker.PollInterval); err != nil {
+		return Config{}, err
+	}
+	if cfg.Worker.JobTimeout, err = durationValue(lookup, "WORKER_JOB_TIMEOUT", cfg.Worker.JobTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.Worker.LockTimeout, err = durationValue(lookup, "WORKER_LOCK_TIMEOUT", cfg.Worker.LockTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.Worker.RetryBaseDelay, err = durationValue(lookup, "WORKER_RETRY_BASE_DELAY", cfg.Worker.RetryBaseDelay); err != nil {
+		return Config{}, err
+	}
+	if cfg.Worker.RetryMaxDelay, err = durationValue(lookup, "WORKER_RETRY_MAX_DELAY", cfg.Worker.RetryMaxDelay); err != nil {
 		return Config{}, err
 	}
 	if cfg.Models.Chat.Timeout, err = durationValue(lookup, "LLM_TIMEOUT", cfg.Models.Chat.Timeout); err != nil {
@@ -258,6 +284,21 @@ func (cfg Config) validate() error {
 	}
 	if cfg.Worker.PollInterval <= 0 {
 		return fmt.Errorf("WORKER_POLL_INTERVAL must be greater than zero")
+	}
+	if len(cfg.Worker.ID) > 100 {
+		return fmt.Errorf("WORKER_ID must not exceed 100 characters")
+	}
+	if cfg.Worker.JobTimeout <= 0 {
+		return fmt.Errorf("WORKER_JOB_TIMEOUT must be greater than zero")
+	}
+	if cfg.Worker.LockTimeout <= cfg.Worker.JobTimeout {
+		return fmt.Errorf("WORKER_LOCK_TIMEOUT must be greater than WORKER_JOB_TIMEOUT")
+	}
+	if cfg.Worker.RetryBaseDelay <= 0 {
+		return fmt.Errorf("WORKER_RETRY_BASE_DELAY must be greater than zero")
+	}
+	if cfg.Worker.RetryMaxDelay < cfg.Worker.RetryBaseDelay {
+		return fmt.Errorf("WORKER_RETRY_MAX_DELAY must not be less than WORKER_RETRY_BASE_DELAY")
 	}
 	return nil
 }

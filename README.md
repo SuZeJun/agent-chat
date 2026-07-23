@@ -11,13 +11,14 @@
 - FAQ/Markdown 逻辑文档、不可变版本和活动版本原子切换
 - 固定 1024 维的知识切片与 pgvector HNSW cosine 索引
 - 文档版本与 `knowledge.index` Job 的事务性创建
+- 基于 `FOR UPDATE SKIP LOCKED` 的持久化 Job 领取、有界重试和锁超时恢复
 - 带 advisory lock、文件名和 SHA-256 校验的事务迁移
 - `/healthz` 与 `/readyz`
 - 结构化日志、服务端请求 ID、受控 panic 恢复和优雅退出
 - 带状态约束、重试约束和部分索引的 Job 基础表
 - Go 单元测试、PostgreSQL 集成测试和 GitHub Actions
 
-当前 Worker 只验证进程生命周期和数据库连接；创建文档版本时已经持久化 `knowledge.index` Job，但 Worker 尚未领取或执行该任务。
+Worker 只领取已注册的 Job 类型，避免新旧版本部署期间误消费尚未支持的任务。当前通用执行器已经完成，但 `knowledge.index` Handler 尚未注册，因此索引任务会保留在 `pending`，不会被错误标记为失败。
 
 ## 本地启动
 
@@ -42,6 +43,8 @@ curl http://127.0.0.1:8080/readyz
 ```
 
 默认配置与 Compose 一致。覆盖配置时参考 `.env.example` 设置环境变量；应用不会自动读取 `.env` 文件。模型默认使用关闭 thinking 的 `deepseek-v4-flash` 与 1024 维 `embedding-3`，API Key 不得提交到仓库。当前健康检查不调用模型，因此本地未配置 Key 时仍可启动；创建模型 Provider 时会拒绝空 Key。`production` 环境必须显式配置 `DATABASE_URL`、`LLM_API_KEY` 和 `EMBEDDING_API_KEY`，模型端点必须使用 HTTPS；数据库 `sslmode` 仅接受 `require`、`verify-ca` 或 `verify-full`，生产部署优先使用 `verify-full`。
+
+Worker 默认单进程串行执行任务。`WORKER_JOB_TIMEOUT` 限制单次执行时间，`WORKER_LOCK_TIMEOUT` 必须更长，用于恢复进程崩溃遗留的租约；重试使用 `WORKER_RETRY_BASE_DELAY` 到 `WORKER_RETRY_MAX_DELAY` 之间的有界指数退避。
 
 ## Windows PowerShell
 

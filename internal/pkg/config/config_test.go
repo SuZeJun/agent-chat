@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -20,6 +21,12 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.Worker.PollInterval != defaultWorkerPollInterval {
 		t.Fatalf("unexpected poll interval: %s", cfg.Worker.PollInterval)
+	}
+	if cfg.Worker.JobTimeout != defaultWorkerJobTimeout ||
+		cfg.Worker.LockTimeout != defaultWorkerLockTimeout ||
+		cfg.Worker.RetryBaseDelay != defaultWorkerRetryBaseDelay ||
+		cfg.Worker.RetryMaxDelay != defaultWorkerRetryMaxDelay {
+		t.Fatalf("unexpected worker config: %#v", cfg.Worker)
 	}
 	if cfg.Models.Chat.BaseURL != defaultLLMBaseURL || cfg.Models.Chat.Model != defaultLLMModel {
 		t.Fatalf("unexpected chat model config: %#v", cfg.Models.Chat)
@@ -43,7 +50,12 @@ func TestLoadParsesOverrides(t *testing.T) {
 		"DATABASE_MIN_OPEN_CONNS":    "2",
 		"DATABASE_PING_TIMEOUT":      "3s",
 		"DATABASE_MIGRATION_TIMEOUT": "45s",
+		"WORKER_ID":                  "worker-test",
 		"WORKER_POLL_INTERVAL":       "500ms",
+		"WORKER_JOB_TIMEOUT":         "30s",
+		"WORKER_LOCK_TIMEOUT":        "1m",
+		"WORKER_RETRY_BASE_DELAY":    "3s",
+		"WORKER_RETRY_MAX_DELAY":     "30s",
 		"LLM_API_KEY":                "chat-key",
 		"LLM_BASE_URL":               "https://llm.example.com/v1",
 		"LLM_MODEL":                  "deepseek-v4-pro",
@@ -71,8 +83,13 @@ func TestLoadParsesOverrides(t *testing.T) {
 	if cfg.Database.MaxOpenConns != 20 || cfg.Database.MinOpenConns != 2 {
 		t.Fatalf("unexpected connection limits: %#v", cfg.Database)
 	}
-	if cfg.Worker.PollInterval != 500*time.Millisecond {
-		t.Fatalf("unexpected poll interval: %s", cfg.Worker.PollInterval)
+	if cfg.Worker.ID != "worker-test" ||
+		cfg.Worker.PollInterval != 500*time.Millisecond ||
+		cfg.Worker.JobTimeout != 30*time.Second ||
+		cfg.Worker.LockTimeout != time.Minute ||
+		cfg.Worker.RetryBaseDelay != 3*time.Second ||
+		cfg.Worker.RetryMaxDelay != 30*time.Second {
+		t.Fatalf("unexpected worker config: %#v", cfg.Worker)
 	}
 	if cfg.Models.Chat.APIKey != "chat-key" || cfg.Models.Chat.Model != "deepseek-v4-pro" || !cfg.Models.Chat.Thinking {
 		t.Fatalf("unexpected chat model config: %#v", cfg.Models.Chat)
@@ -102,6 +119,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "chat model", key: "LLM_MODEL", value: "unknown-model"},
 		{name: "embedding model", key: "EMBEDDING_MODEL", value: "embedding-2"},
 		{name: "environment", key: "APP_ENV", value: "prod"},
+		{name: "worker job timeout", key: "WORKER_JOB_TIMEOUT", value: "0s"},
+		{name: "worker lock timeout", key: "WORKER_LOCK_TIMEOUT", value: "1m"},
+		{name: "worker retry base delay", key: "WORKER_RETRY_BASE_DELAY", value: "0s"},
 	}
 
 	for _, test := range tests {
@@ -111,6 +131,30 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 					return test.value, true
 				}
 				return "", false
+			})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidWorkerRelationships(t *testing.T) {
+	tests := []map[string]string{
+		{
+			"WORKER_JOB_TIMEOUT":  "2m",
+			"WORKER_LOCK_TIMEOUT": "2m",
+		},
+		{
+			"WORKER_RETRY_BASE_DELAY": "10s",
+			"WORKER_RETRY_MAX_DELAY":  "5s",
+		},
+	}
+	for index, values := range tests {
+		t.Run(strconv.Itoa(index), func(t *testing.T) {
+			_, err := load(func(key string) (string, bool) {
+				value, ok := values[key]
+				return value, ok
 			})
 			if err == nil {
 				t.Fatal("expected an error")

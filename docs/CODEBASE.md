@@ -97,10 +97,13 @@ cmd/worker/main.go
 | 文件 | 职责 |
 | --- | --- |
 | `internal/infrastructure/jobs/doc.go` | Jobs 包职责说明 |
-| `internal/infrastructure/jobs/worker.go` | 管理 Worker 轮询生命周期和数据库心跳 |
-| `internal/infrastructure/jobs/worker_test.go` | 验证 Worker 能响应 Context 取消 |
+| `internal/infrastructure/jobs/job.go` | 定义 Job、Handler、稳定错误分类和幂等执行契约 |
+| `internal/infrastructure/jobs/queue.go` | 使用 PostgreSQL 租约原子领取、完成、重试和恢复任务 |
+| `internal/infrastructure/jobs/worker.go` | 管理类型分发、执行超时、有界退避和 Context 生命周期 |
+| `internal/infrastructure/jobs/worker_test.go` | 验证成功、重试、永久失败、取消收尾和类型过滤 |
+| `internal/infrastructure/jobs/queue_integration_test.go` | 使用真实 PostgreSQL 验证并发领取、租约、重试上限和锁恢复 |
 
-当前 Worker 尚未领取和执行持久化 Job；`knowledge.index` Job 已由 Knowledge Repository 创建。
+Worker 只领取 Bootstrap 已注册的 Job 类型。通用执行器已完成；当前尚未注册 `knowledge.index` Handler，因此已有索引任务保持 `pending`。
 
 ## 通用包
 
