@@ -28,7 +28,7 @@ func TestMigrateAgainstPostgres(t *testing.T) {
 	}
 	defer adminPool.Close()
 
-	if _, err := adminPool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public"); err != nil {
+	if err := ensureVectorExtension(ctx, adminPool); err != nil {
 		t.Fatalf("create vector extension: %v", err)
 	}
 
@@ -149,4 +149,22 @@ func TestMigrateAgainstPostgres(t *testing.T) {
 	if err := Migrate(ctx, pool); err == nil {
 		t.Fatal("expected changed migration checksum to fail")
 	}
+}
+
+func ensureVectorExtension(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public"); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
