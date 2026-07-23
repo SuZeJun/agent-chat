@@ -36,6 +36,7 @@ Agent Chat 是面向企业客服与技术支持团队的 AI 服务运营平台�
 - `docs/ARCHITECTURE.md`
 - `docs/EVALUATION.md`
 - `docs/ROADMAP.md`
+- `docs/CODEBASE.md`
 
 ## 2. 固定技术栈
 

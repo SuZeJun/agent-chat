@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Open 创建 PostgreSQL 连接池，并在返回前完成一次带超时的连通性检查。
 func Open(ctx context.Context, cfg config.Database) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(cfg.URL)
 	if err != nil {

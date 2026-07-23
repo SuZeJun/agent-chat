@@ -12,6 +12,7 @@ import (
 	httptransport "agent-chat/internal/transport/http"
 )
 
+// RunAPI 组装并运行 HTTP API，直到服务失败或 Context 被取消。
 func RunAPI(ctx context.Context, output io.Writer) error {
 	runtime, err := newRuntime(ctx, output)
 	if err != nil {
@@ -31,6 +32,7 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	// 先同步创建 listener，避免 Context 已取消而 Serve 尚未启动时出现关闭竞态。
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		return fmt.Errorf("listen http: %w", err)
@@ -56,6 +58,7 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 		if shutdownErr != nil {
 			_ = server.Close()
 		}
+		// Shutdown 只负责发起关闭，仍需读取 Serve 的最终结果以保留真实错误。
 		serveErr := <-errorChannel
 		if errors.Is(serveErr, http.ErrServerClosed) {
 			serveErr = nil

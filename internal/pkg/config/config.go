@@ -20,12 +20,14 @@ const (
 	defaultDatabaseMinOpenConns = int32(1)
 )
 
+// Config 汇总 API、数据库和 Worker 的运行配置。
 type Config struct {
 	App      App
 	Database Database
 	Worker   Worker
 }
 
+// App 定义进程级应用配置。
 type App struct {
 	Environment     string
 	HTTPAddress     string
@@ -33,6 +35,7 @@ type App struct {
 	ShutdownTimeout time.Duration
 }
 
+// Database 定义 PostgreSQL 连接池和超时配置。
 type Database struct {
 	URL              string
 	MaxOpenConns     int32
@@ -41,12 +44,14 @@ type Database struct {
 	MigrationTimeout time.Duration
 }
 
+// Worker 定义后台任务轮询配置。
 type Worker struct {
 	PollInterval time.Duration
 }
 
 type lookupFunc func(string) (string, bool)
 
+// Load 从进程环境变量加载并校验配置。
 func Load() (Config, error) {
 	return load(os.LookupEnv)
 }

@@ -16,6 +16,7 @@ const requestIDHeader = "X-Request-ID"
 
 func requestContext(logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
+		// 始终生成服务端 request ID，避免客户端伪造关联标识混淆日志。
 		requestID := newRequestID()
 		ctx.Set("request_id", requestID)
 		ctx.Header(requestIDHeader, requestID)
@@ -45,6 +46,7 @@ func recovery(logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				// 不记录原始 panic 值，避免异常参数或凭据进入日志。
 				logger.ErrorContext(ctx.Request.Context(), "http panic recovered",
 					"request_id", ctx.GetString("request_id"),
 					"panic_type", fmt.Sprintf("%T", recovered),

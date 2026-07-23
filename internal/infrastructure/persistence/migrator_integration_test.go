@@ -151,6 +151,7 @@ func TestMigrateAgainstPostgres(t *testing.T) {
 	}
 }
 
+// ensureVectorExtension 使用迁移锁创建扩展，避免不同测试包并发执行 CREATE EXTENSION。
 func ensureVectorExtension(ctx context.Context, pool *pgxpool.Pool) error {
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

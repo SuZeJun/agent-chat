@@ -5,6 +5,7 @@ import (
 	"log/slog"
 )
 
+// New 创建输出 JSON 的结构化 Logger，并应用项目支持的日志级别。
 func New(output io.Writer, level string) *slog.Logger {
 	var slogLevel slog.Level
 	switch level {

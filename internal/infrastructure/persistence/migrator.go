@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// migrationLockID 必须在所有进程和集成测试中保持一致，用于串行化 Schema 与扩展变更。
 const migrationLockID int64 = 763521904
 
 type migration struct {
@@ -25,6 +26,9 @@ type migration struct {
 	checksum string
 }
 
+// Migrate 按版本顺序执行嵌入式迁移，并校验已执行迁移的文件名和 SHA-256。
+//
+// 迁移事务通过 PostgreSQL advisory lock 串行化，允许 API 和 Worker 安全并发启动。
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	items, err := loadMigrations()
 	if err != nil {

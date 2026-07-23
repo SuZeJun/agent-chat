@@ -9,10 +9,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// DatabaseHealth 定义 HTTP 就绪检查所需的最小数据库能力。
 type DatabaseHealth interface {
 	Ping(context.Context) error
 }
 
+// RouterOptions 定义创建 HTTP Router 所需的依赖和运行参数。
 type RouterOptions struct {
 	Logger              *slog.Logger
 	Database            DatabaseHealth
@@ -20,6 +22,7 @@ type RouterOptions struct {
 	Environment         string
 }
 
+// NewRouter 创建包含中间件、存活检查和就绪检查的 Gin Engine。
 func NewRouter(options RouterOptions) *gin.Engine {
 	if options.Environment != "development" {
 		gin.SetMode(gin.ReleaseMode)
