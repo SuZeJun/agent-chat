@@ -21,6 +21,10 @@ cmd/worker/main.go
   -> internal/bootstrap/worker.go
   -> internal/bootstrap/runtime.go
   -> internal/infrastructure/jobs/worker.go
+  -> internal/infrastructure/jobs/knowledge_handler.go
+  -> internal/application/knowledgeindex/
+  -> internal/infrastructure/model/
+  -> internal/infrastructure/persistence/knowledge/
 ```
 
 ## 根目录
@@ -84,6 +88,18 @@ cmd/worker/main.go
 | `internal/domain/knowledge/repository.go` | 定义版本写入、索引完成、原子发布和活动切片检索 Port |
 | `internal/domain/knowledge/model_test.go` | 验证内容校验和、向量有限值和 Embedding 身份比较 |
 
+## Knowledge Application
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/application/knowledgeindex/doc.go` | Knowledge Index Application 包说明 |
+| `internal/application/knowledgeindex/chunker.go` | 实现 FAQ/Markdown 确定性切片和检索元数据生成 |
+| `internal/application/knowledgeindex/indexer.go` | 编排批量 embedding、切片替换、失败分类和单调发布 |
+| `internal/application/knowledgeindex/chunker_test.go` | 读取版本化 Eval Case 验证切片稳定性 |
+| `internal/application/knowledgeindex/indexer_test.go` | 验证幂等、批处理和错误分类 |
+| `internal/application/knowledgeindex/indexer_integration_test.go` | 使用真实 PostgreSQL 验证索引、检索和乱序发布 |
+| `internal/application/knowledgeindex/testdata/chunking_cases.json` | 固定 FAQ/Markdown 切片 Eval Case |
+
 ## Knowledge Persistence
 
 | 文件 | 职责 |
@@ -100,10 +116,12 @@ cmd/worker/main.go
 | `internal/infrastructure/jobs/job.go` | 定义 Job、Handler、稳定错误分类和幂等执行契约 |
 | `internal/infrastructure/jobs/queue.go` | 使用 PostgreSQL 租约原子领取、完成、重试和恢复任务 |
 | `internal/infrastructure/jobs/worker.go` | 管理类型分发、执行超时、有界退避和 Context 生命周期 |
+| `internal/infrastructure/jobs/knowledge_handler.go` | 校验 `knowledge.index` Payload 并适配 Application 索引用例 |
 | `internal/infrastructure/jobs/worker_test.go` | 验证成功、重试、永久失败、取消收尾和类型过滤 |
+| `internal/infrastructure/jobs/knowledge_handler_test.go` | 验证索引 Payload、幂等键和失败分类映射 |
 | `internal/infrastructure/jobs/queue_integration_test.go` | 使用真实 PostgreSQL 验证并发领取、租约、重试上限和锁恢复 |
 
-Worker 只领取 Bootstrap 已注册的 Job 类型。通用执行器已完成；当前尚未注册 `knowledge.index` Handler，因此已有索引任务保持 `pending`。
+Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDING_API_KEY` 时不注册 `knowledge.index` Handler，已有索引任务保持 `pending`。
 
 ## 通用包
 

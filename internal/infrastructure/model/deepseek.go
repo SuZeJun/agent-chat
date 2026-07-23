@@ -52,6 +52,11 @@ func (err *ModelProviderError) Error() string {
 	return fmt.Sprintf("%s model %s failed: retryable=%t", err.Provider, err.Operation, err.Retryable)
 }
 
+// CanRetry 返回调用方是否可以安全重试本次供应商操作。
+func (err *ModelProviderError) CanRetry() bool {
+	return err.Retryable
+}
+
 // DeepSeekChatModel 为 Eino ChatModel 增加供应商错误脱敏边界。
 type DeepSeekChatModel struct {
 	inner einomodel.ToolCallingChatModel

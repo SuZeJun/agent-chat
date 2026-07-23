@@ -26,6 +26,9 @@ var ErrInvalidState = errors.New("invalid knowledge state")
 // ErrEmbeddingIdentityMismatch 表示索引与当前 Embedder 不属于同一向量空间。
 var ErrEmbeddingIdentityMismatch = errors.New("embedding identity mismatch")
 
+// ErrVersionSuperseded 表示目标版本早于当前活动版本，不得回退发布。
+var ErrVersionSuperseded = errors.New("knowledge version superseded")
+
 // BaseStatus 表示知识库是否参与在线检索。
 type BaseStatus string
 
@@ -169,6 +172,36 @@ type Version struct {
 	ContentSHA256 string
 	// EmbeddingIdentity 是该版本索引使用的向量空间。
 	EmbeddingIdentity EmbeddingIdentity
+}
+
+// IndexSource 汇总 Worker 构建索引所需的逻辑文档、不可变版本和当前状态。
+type IndexSource struct {
+	Document Document
+	Version  Version
+	Status   IndexStatus
+	Active   bool
+}
+
+// Validate 校验索引源聚合的一致性。
+func (source IndexSource) Validate() error {
+	if err := source.Document.Validate(); err != nil {
+		return fmt.Errorf("invalid index source document: %w", err)
+	}
+	if err := source.Version.Validate(); err != nil {
+		return fmt.Errorf("invalid index source version: %w", err)
+	}
+	if source.Version.DocumentID != source.Document.ID {
+		return fmt.Errorf("index source version does not belong to document")
+	}
+	switch source.Status {
+	case IndexStatusPending, IndexStatusIndexing, IndexStatusReady, IndexStatusFailed:
+	default:
+		return fmt.Errorf("invalid index status %q", source.Status)
+	}
+	if source.Active && source.Status != IndexStatusReady {
+		return fmt.Errorf("active index source must be ready")
+	}
+	return nil
 }
 
 // Validate 校验不可变版本及内容校验和。

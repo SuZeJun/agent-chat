@@ -58,8 +58,19 @@ func TestRepositoryVersionLifecycleAgainstPostgres(t *testing.T) {
 		t.Fatalf("create first version: %v", err)
 	}
 	assertIndexJob(t, ctx, pool, "job-1", versionOne.ID)
+	indexSource, err := repository.LoadIndexSource(ctx, versionOne.ID)
+	if err != nil {
+		t.Fatalf("load first index source: %v", err)
+	}
+	if indexSource.Document.ID != document.ID ||
+		indexSource.Document.Metadata["locale"] != "zh-CN" ||
+		indexSource.Version != versionOne ||
+		indexSource.Status != domain.IndexStatusPending ||
+		indexSource.Active {
+		t.Fatalf("unexpected first index source: %#v", indexSource)
+	}
 
-	err := repository.PublishVersion(ctx, document.ID, versionOne.ID, identity, time.Now())
+	err = repository.PublishVersion(ctx, document.ID, versionOne.ID, identity, time.Now())
 	if !errors.Is(err, domain.ErrInvalidState) {
 		t.Fatalf("expected pending version publish to fail, got %v", err)
 	}
@@ -144,6 +155,14 @@ func TestRepositoryVersionLifecycleAgainstPostgres(t *testing.T) {
 	results = searchChunks(t, ctx, repository, base.ID, identity, vectorTwo)
 	if len(results) != 1 || results[0].VersionID != versionTwo.ID {
 		t.Fatalf("old version still participated after publish: %#v", results)
+	}
+	err = repository.PublishVersion(ctx, document.ID, versionOne.ID, identity, time.Now())
+	if !errors.Is(err, domain.ErrVersionSuperseded) {
+		t.Fatalf("expected old version republish to be rejected, got %v", err)
+	}
+	results = searchChunks(t, ctx, repository, base.ID, identity, vectorTwo)
+	if len(results) != 1 || results[0].VersionID != versionTwo.ID {
+		t.Fatalf("superseded publish replaced active version: %#v", results)
 	}
 
 	mismatchedIdentity := identity

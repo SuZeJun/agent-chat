@@ -136,6 +136,72 @@ func (repository *Repository) CreateVersionAndIndexJob(
 	return nil
 }
 
+// LoadIndexSource 读取 Worker 构建索引所需的逻辑文档、版本和发布状态。
+func (repository *Repository) LoadIndexSource(
+	ctx context.Context,
+	versionID string,
+) (domain.IndexSource, error) {
+	if strings.TrimSpace(versionID) == "" {
+		return domain.IndexSource{}, fmt.Errorf("load knowledge index source: version ID must not be blank")
+	}
+
+	var source domain.IndexSource
+	var documentType string
+	var status string
+	var metadata []byte
+	err := repository.database.QueryRow(ctx, `
+		SELECT
+			document.id,
+			document.knowledge_base_id,
+			document.document_type,
+			document.title,
+			document.metadata,
+			version.id,
+			version.document_id,
+			version.version,
+			version.content,
+			version.content_sha256,
+			version.embedding_provider,
+			version.embedding_model,
+			version.embedding_dimensions,
+			version.index_status,
+			COALESCE(document.active_version_id = version.id, false)
+		FROM knowledge_document_versions AS version
+		JOIN knowledge_documents AS document
+		  ON document.id = version.document_id
+		WHERE version.id = $1
+		  AND document.deleted_at IS NULL
+	`, versionID).Scan(
+		&source.Document.ID,
+		&source.Document.KnowledgeBaseID,
+		&documentType,
+		&source.Document.Title,
+		&metadata,
+		&source.Version.ID,
+		&source.Version.DocumentID,
+		&source.Version.Number,
+		&source.Version.Content,
+		&source.Version.ContentSHA256,
+		&source.Version.EmbeddingIdentity.Provider,
+		&source.Version.EmbeddingIdentity.Model,
+		&source.Version.EmbeddingIdentity.Dimensions,
+		&status,
+		&source.Active,
+	)
+	if err != nil {
+		return domain.IndexSource{}, mapDatabaseError("load knowledge index source", err)
+	}
+	source.Document.Type = domain.DocumentType(documentType)
+	source.Status = domain.IndexStatus(status)
+	if err := json.Unmarshal(metadata, &source.Document.Metadata); err != nil {
+		return domain.IndexSource{}, fmt.Errorf("load knowledge index source: invalid persisted metadata")
+	}
+	if err := source.Validate(); err != nil {
+		return domain.IndexSource{}, fmt.Errorf("load knowledge index source: %w", err)
+	}
+	return source, nil
+}
+
 // ReplaceChunksAndMarkReady 原子替换未发布版本切片并将版本标记为 ready。
 func (repository *Repository) ReplaceChunksAndMarkReady(
 	ctx context.Context,
@@ -328,20 +394,36 @@ func (repository *Repository) PublishVersion(
 	var provider string
 	var model string
 	var dimensions int
+	var targetVersion int
+	var activeVersionID *string
+	var activeVersionNumber *int
 	err = transaction.QueryRow(ctx, `
 		SELECT
 			version.index_status,
 			version.embedding_provider,
 			version.embedding_model,
-			version.embedding_dimensions
+			version.embedding_dimensions,
+			version.version,
+			document.active_version_id,
+			active_version.version
 		FROM knowledge_documents AS document
 		JOIN knowledge_document_versions AS version
 		  ON version.document_id = document.id
 		 AND version.id = $2
+		LEFT JOIN knowledge_document_versions AS active_version
+		  ON active_version.id = document.active_version_id
 		WHERE document.id = $1
 		  AND document.deleted_at IS NULL
 		FOR UPDATE OF document, version
-	`, documentID, versionID).Scan(&status, &provider, &model, &dimensions)
+	`, documentID, versionID).Scan(
+		&status,
+		&provider,
+		&model,
+		&dimensions,
+		&targetVersion,
+		&activeVersionID,
+		&activeVersionNumber,
+	)
 	if err != nil {
 		return mapDatabaseError("publish knowledge version", err)
 	}
@@ -355,6 +437,15 @@ func (repository *Repository) PublishVersion(
 	}
 	if !versionIdentity.Equal(identity) {
 		return fmt.Errorf("publish knowledge version: %w", domain.ErrEmbeddingIdentityMismatch)
+	}
+	if activeVersionID != nil && *activeVersionID == versionID {
+		if err := transaction.Commit(ctx); err != nil {
+			return mapDatabaseError("publish knowledge version", err)
+		}
+		return nil
+	}
+	if activeVersionNumber != nil && *activeVersionNumber > targetVersion {
+		return fmt.Errorf("publish knowledge version: %w", domain.ErrVersionSuperseded)
 	}
 
 	if _, err := transaction.Exec(ctx, `

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	domain "agent-chat/internal/domain/knowledge"
 	"agent-chat/internal/pkg/config"
 
 	einoembedding "github.com/cloudwego/eino/components/embedding"
@@ -41,11 +42,7 @@ type ZhipuEmbedder struct {
 //
 // 后续索引版本必须持久化该身份，并在查询旧索引前做完整匹配；仅比较维度
 // 无法阻止不同模型的向量空间被静默混用。
-type EmbeddingIdentity struct {
-	Provider   string
-	Model      string
-	Dimensions int
-}
+type EmbeddingIdentity = domain.EmbeddingIdentity
 
 // NewZhipuEmbedder 根据配置创建智谱 Eino Embedder。
 func NewZhipuEmbedder(cfg config.EmbeddingModel) (*ZhipuEmbedder, error) {
@@ -98,6 +95,14 @@ func (embedder *ZhipuEmbedder) Identity() EmbeddingIdentity {
 	}
 }
 
+// Embed 为 Application 索引用例提供不暴露 Eino Option 的最小 embedding Port。
+func (embedder *ZhipuEmbedder) Embed(
+	ctx context.Context,
+	texts []string,
+) ([][]float64, error) {
+	return embedder.EmbedStrings(ctx, texts)
+}
+
 // EmbedStrings 批量生成与输入顺序严格一致的向量。
 func (embedder *ZhipuEmbedder) EmbedStrings(
 	ctx context.Context,
@@ -141,50 +146,58 @@ func (embedder *ZhipuEmbedder) EmbedStrings(
 
 	response, err := embedder.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("embed strings: call Zhipu API: %w", err)
+		switch {
+		case errors.Is(err, context.Canceled):
+			return nil, context.Canceled
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, context.DeadlineExceeded
+		default:
+			return nil, embeddingProviderError(0)
+		}
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxEmbeddingErrorDrainBytes))
 		// 第三方错误正文可能回显请求内容或供应商内部信息，不向上层传播。
-		return nil, fmt.Errorf("embed strings: Zhipu API returned status %d", response.StatusCode)
+		return nil, embeddingProviderError(response.StatusCode)
 	}
 
 	responseBody, err := readLimitedResponse(response.Body, maxEmbeddingResponseBytes)
 	if err != nil {
-		return nil, fmt.Errorf("embed strings: read response: %w", err)
+		return nil, embeddingProviderError(0)
 	}
 	var decoded embeddingResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
-		return nil, fmt.Errorf("embed strings: decode response: %w", err)
+		return nil, embeddingProviderError(0)
 	}
 	if len(decoded.Data) != len(texts) {
-		return nil, fmt.Errorf(
-			"embed strings: response count mismatch: expected %d, got %d",
-			len(texts),
-			len(decoded.Data),
-		)
+		return nil, embeddingProviderError(0)
 	}
 
 	embeddings := make([][]float64, len(texts))
 	for _, item := range decoded.Data {
 		if item.Index < 0 || item.Index >= len(texts) {
-			return nil, fmt.Errorf("embed strings: response index %d is out of range", item.Index)
+			return nil, embeddingProviderError(0)
 		}
 		if embeddings[item.Index] != nil {
-			return nil, fmt.Errorf("embed strings: response index %d is duplicated", item.Index)
+			return nil, embeddingProviderError(0)
 		}
 		if len(item.Embedding) != embedder.dimensions {
-			return nil, fmt.Errorf(
-				"embed strings: vector dimension mismatch at index %d: expected %d, got %d",
-				item.Index,
-				embedder.dimensions,
-				len(item.Embedding),
-			)
+			return nil, embeddingProviderError(0)
 		}
 		embeddings[item.Index] = item.Embedding
 	}
 	return embeddings, nil
+}
+
+func embeddingProviderError(statusCode int) error {
+	return &ModelProviderError{
+		Provider:   zhipuEmbeddingProvider,
+		Operation:  "embed",
+		StatusCode: statusCode,
+		Retryable: statusCode == 0 || statusCode == http.StatusRequestTimeout ||
+			statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError,
+	}
 }
 
 func readLimitedResponse(reader io.Reader, limit int64) ([]byte, error) {

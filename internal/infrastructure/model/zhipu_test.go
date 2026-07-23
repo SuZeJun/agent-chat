@@ -206,6 +206,40 @@ func TestZhipuEmbedderDrainsErrorResponseForConnectionReuse(t *testing.T) {
 	}
 }
 
+func TestZhipuEmbedderClassifiesProviderStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		status    int
+		retryable bool
+	}{
+		{name: "bad request", status: http.StatusBadRequest, retryable: false},
+		{name: "rate limited", status: http.StatusTooManyRequests, retryable: true},
+		{name: "server error", status: http.StatusInternalServerError, retryable: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				http.Error(writer, "sensitive response", test.status)
+			}))
+			defer server.Close()
+
+			embedder := newTestZhipuEmbedder(server.Client())
+			embedder.endpoint = server.URL
+			_, err := embedder.Embed(context.Background(), []string{"question"})
+			var providerError *ModelProviderError
+			if !errors.As(err, &providerError) {
+				t.Fatalf("expected ModelProviderError, got %v", err)
+			}
+			if providerError.StatusCode != test.status || providerError.CanRetry() != test.retryable {
+				t.Fatalf("unexpected provider error: %#v", providerError)
+			}
+		})
+	}
+}
+
 func TestZhipuEmbedderRejectsUnsupportedModel(t *testing.T) {
 	t.Parallel()
 

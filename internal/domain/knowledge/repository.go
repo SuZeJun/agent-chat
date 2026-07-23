@@ -13,6 +13,8 @@ type Repository interface {
 	CreateDocument(ctx context.Context, document Document) error
 	// CreateVersionAndIndexJob 原子创建不可变版本和持久化索引任务。
 	CreateVersionAndIndexJob(ctx context.Context, version Version, jobID string) error
+	// LoadIndexSource 读取 Worker 构建索引所需的逻辑文档与不可变版本快照。
+	LoadIndexSource(ctx context.Context, versionID string) (IndexSource, error)
 	// ReplaceChunksAndMarkReady 原子替换未发布版本切片并将版本标记为 ready。
 	ReplaceChunksAndMarkReady(
 		ctx context.Context,
