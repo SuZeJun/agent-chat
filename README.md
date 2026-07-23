@@ -6,6 +6,8 @@
 
 - Go API 与 Worker 双进程入口
 - PostgreSQL + pgvector
+- DeepSeek V4 Flash Eino ChatModel 适配
+- 智谱 Embedding-3 Eino Embedder 适配
 - 带 advisory lock、文件名和 SHA-256 校验的事务迁移
 - `/healthz` 与 `/readyz`
 - 结构化日志、服务端请求 ID、受控 panic 恢复和优雅退出
@@ -36,7 +38,7 @@ curl http://127.0.0.1:8080/healthz
 curl http://127.0.0.1:8080/readyz
 ```
 
-默认配置与 Compose 一致。覆盖配置时参考 `.env.example` 设置环境变量；应用不会自动读取 `.env` 文件。`production` 环境必须显式配置 `DATABASE_URL`，且 `sslmode` 仅接受 `require`、`verify-ca` 或 `verify-full`，生产部署优先使用 `verify-full`。
+默认配置与 Compose 一致。覆盖配置时参考 `.env.example` 设置环境变量；应用不会自动读取 `.env` 文件。模型默认使用关闭 thinking 的 `deepseek-v4-flash` 与 1024 维 `embedding-3`，API Key 不得提交到仓库。当前健康检查不调用模型，因此本地未配置 Key 时仍可启动；创建模型 Provider 时会拒绝空 Key。`production` 环境必须显式配置 `DATABASE_URL`、`LLM_API_KEY` 和 `EMBEDDING_API_KEY`，模型端点必须使用 HTTPS；数据库 `sslmode` 仅接受 `require`、`verify-ca` 或 `verify-full`，生产部署优先使用 `verify-full`。
 
 ## Windows PowerShell
 

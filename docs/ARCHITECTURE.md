@@ -163,6 +163,14 @@ Agent Runtime 不拥有：
 - `Interrupt/Resume`：实现用户确认。
 - `Callbacks`：收集节点、模型、工具和错误 Trace。
 
+首版模型 Provider 固定为：
+
+- `deepseek-v4-flash` 非思考模式负责 RAG 回答，复杂模型路由需在 Eval 证明收益后再引入。
+- 智谱 `embedding-3` 生成 1024 维向量，索引与查询必须使用相同模型和维度。
+- 每个索引版本必须持久化 `provider + model + dimensions`，查询前必须与当前 Embedder 身份完整匹配。
+- Provider 配置位于通用 Config，Eino 和供应商协议实现仅位于 Infrastructure/Agent 边界。
+- API Key 仅通过环境变量注入，不进入日志、Trace、错误正文或持久化配置。
+
 ### 5.2 首版不采用
 
 - 多 Agent 自主协作

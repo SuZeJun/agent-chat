@@ -105,6 +105,16 @@ cmd/worker/main.go
 
 已经提交或执行的迁移文件不可直接改写；后续 Schema 变化必须新增版本文件。
 
+## 模型 Provider
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/infrastructure/model/doc.go` | Model Provider 包职责说明 |
+| `internal/infrastructure/model/deepseek.go` | 将 DeepSeek OpenAI 兼容接口适配为 Eino ToolCallingChatModel |
+| `internal/infrastructure/model/deepseek_test.go` | 验证模型、鉴权和 thinking 参数请求 |
+| `internal/infrastructure/model/zhipu.go` | 将智谱 Embeddings API 适配为固定模型和维度的 Eino Embedder |
+| `internal/infrastructure/model/zhipu_test.go` | 验证批量向量顺序、模型覆盖保护和错误脱敏 |
+
 ## 开发脚本与 CI
 
 | 文件 | 职责 |
