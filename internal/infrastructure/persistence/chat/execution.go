@@ -115,6 +115,14 @@ func (repository *Repository) CompleteRun(
 		command.Message.ConversationID != source.Run.ConversationID {
 		return fmt.Errorf("complete agent run: %w", domain.ErrInvalidState)
 	}
+	if err := insertRunSteps(
+		ctx,
+		transaction,
+		command.RunID,
+		command.Steps,
+	); err != nil {
+		return err
+	}
 
 	_, err = transaction.Exec(ctx, `
 		INSERT INTO messages (
@@ -264,6 +272,7 @@ func loadRunSourceForUpdate(
 	err := transaction.QueryRow(ctx, `
 		SELECT
 			run.id,
+			run.request_id,
 			run.conversation_id,
 			run.source_message_id,
 			run.status,
@@ -287,6 +296,7 @@ func loadRunSourceForUpdate(
 		FOR UPDATE OF run, conversation
 	`, runID).Scan(
 		&source.Run.ID,
+		&source.Run.RequestID,
 		&source.Run.ConversationID,
 		&source.Run.SourceMessageID,
 		&source.Run.Status,
@@ -312,6 +322,48 @@ func loadRunSourceForUpdate(
 		)
 	}
 	return source, nil
+}
+
+func insertRunSteps(
+	ctx context.Context,
+	transaction pgx.Tx,
+	runID string,
+	steps []domain.RunStepDraft,
+) error {
+	for index, step := range steps {
+		_, err := transaction.Exec(ctx, `
+			INSERT INTO agent_run_steps (
+				run_id,
+				step_order,
+				name,
+				component,
+				component_type,
+				status,
+				started_at,
+				completed_at,
+				duration_ms,
+				prompt_tokens,
+				completion_tokens
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`,
+			runID,
+			index+1,
+			step.Name,
+			step.Component,
+			step.ComponentType,
+			step.Status,
+			step.StartedAt,
+			step.CompletedAt,
+			step.DurationMillis,
+			step.PromptTokens,
+			step.CompletionTokens,
+		)
+		if err != nil {
+			return mapDatabaseError("insert agent run step", err)
+		}
+	}
+	return nil
 }
 
 func appendRunEvents(

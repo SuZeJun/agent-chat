@@ -112,6 +112,9 @@ cmd/worker/main.go
 | `internal/application/knowledgeretrieve/service.go` | 编排问题 embedding、向量空间校验和活动切片检索 |
 | `internal/application/knowledgeretrieve/service_test.go` | 验证请求、空结果、过滤、错误分类和检索 Eval Case |
 | `internal/application/knowledgeretrieve/testdata/retrieval_cases.json` | 固定来源期望和元数据过滤检索 Eval Case |
+| `internal/application/knowledgebase/service.go` | 创建本地演示使用的 active Knowledge Base |
+| `internal/application/knowledgeimport/service.go` | 解析、规范化并按内容幂等导入 FAQ CSV |
+| `internal/application/knowledgeimport/service_test.go` | 验证 CSV 表头、字段、URL、大小和规范化校验和 |
 
 ## Chat Application
 
@@ -122,6 +125,9 @@ cmd/worker/main.go
 | `internal/application/chat/service_test.go` | 验证提交构造、幂等结果、请求校验和稳定错误映射 |
 | `internal/application/chat/executor.go` | 编排持久化 Agent Run 尝试、RAG Graph、失败分类和终态提交 |
 | `internal/application/chat/executor_test.go` | 验证成功事件、终态重放、重试耗尽和人工接管保护 |
+| `internal/application/chat/conversation.go` | 创建绑定当前客户和知识库的 AI 会话 |
+| `internal/application/chat/events.go` | 在客户范围内增量读取 Run Event |
+| `internal/application/chat/trace.go` | 读取管理员可见的脱敏 Run Trace |
 
 ## Agent Runtime
 
@@ -133,6 +139,7 @@ cmd/worker/main.go
 | `internal/agent/graph/doc.go` | Eino RAG Graph 包说明 |
 | `internal/agent/graph/graph.go` | 编排检索、Answerability Gate、受约束生成、追问和拒答路由 |
 | `internal/agent/graph/factory.go` | 按会话知识库创建资源隔离的 RAG Runtime |
+| `internal/agent/graph/tracing.go` | 使用 Eino Callback 采集节点、模型耗时和 Token |
 | `internal/agent/graph/answerability.go` | 按明确阈值生成三类 Answerability 决策 |
 | `internal/agent/graph/evidence.go` | 校验检索排序与来源元数据，并限制进入 Prompt 的上下文 |
 | `internal/agent/graph/prompt.go` | 构造不可信知识数据边界并校验回答来源标记 |
@@ -148,6 +155,8 @@ cmd/worker/main.go
 | `internal/infrastructure/persistence/knowledge/doc.go` | Knowledge PostgreSQL Repository 包说明 |
 | `internal/infrastructure/persistence/knowledge/repository.go` | 实现版本与 Job 原子创建、切片替换、发布和 pgvector 检索 |
 | `internal/infrastructure/persistence/knowledge/repository_integration_test.go` | 使用真实 PostgreSQL 验证版本生命周期、原子回滚和活动版本检索 |
+| `internal/infrastructure/persistence/knowledge/import.go` | 原子创建 FAQ Import、文档、版本和索引 Job，并聚合状态 |
+| `internal/infrastructure/persistence/knowledge/import_integration_test.go` | 验证重复导入、并发幂等和失败状态 |
 
 ## Chat Persistence
 
@@ -158,6 +167,8 @@ cmd/worker/main.go
 | `internal/infrastructure/persistence/chat/repository_integration_test.go` | 使用真实 PostgreSQL 验证幂等、客户隔离、并发去重和整笔回滚 |
 | `internal/infrastructure/persistence/chat/execution.go` | 原子管理 Run 尝试、Assistant Message、Graph Result、事件和失败终态 |
 | `internal/infrastructure/persistence/chat/execution_integration_test.go` | 使用真实 PostgreSQL 验证完成、重试、终止、重放和人工接管 |
+| `internal/infrastructure/persistence/chat/events.go` | 按客户范围和 sequence 查询 SSE 事件 |
+| `internal/infrastructure/persistence/chat/trace.go` | 查询 Run 关联 ID、Graph Result 和节点 Trace |
 
 ## Worker
 
@@ -196,6 +207,8 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `migrations/000002_knowledge.sql` | 创建知识库、文档版本、1024 维切片、活动版本约束和 HNSW 索引 |
 | `migrations/000003_chat.sql` | 创建会话、消息、Agent Run、运行事件、状态约束和幂等索引 |
 | `migrations/000004_agent_run_execution.sql` | 关联 Assistant Message 与 Run，并保证每个 Run 只有一个回答 |
+| `migrations/000005_faq_imports.sql` | 创建内容幂等 FAQ Import 和逐行实体关联 |
+| `migrations/000006_agent_run_trace.sql` | 增加 Request ID 和节点/模型 Trace 表 |
 
 已经提交或执行的迁移文件不可直接改写；后续 Schema 变化必须新增版本文件。
 
@@ -217,7 +230,10 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `scripts/build.ps1` | 构建 API 和 Worker Windows 二进制 |
 | `scripts/dev.ps1` | 等待 PostgreSQL 后启动 API 与 Worker |
 | `scripts/check.ps1` | 运行格式、测试、vet、构建和 Compose 检查 |
-| `.github/workflows/ci.yml` | 在 GitHub Actions 中运行单元测试、真实数据库集成测试和构建 |
+| `cmd/rag-eval/main.go` | 实际执行 Eino Graph 并生成 JSON/Markdown 安全评估报告 |
+| `evals/cases/rag_mvp.json` | 版本化 RAG MVP 决策、引用和模型调用评估集 |
+| `evals/runner/test_rag_mvp.py` | 通过 pytest 执行 Eval 并校验发布门槛 |
+| `.github/workflows/ci.yml` | 运行 Go、PostgreSQL、pytest Eval、构建和 Compose 检查 |
 
 ## 产品与设计文档
 

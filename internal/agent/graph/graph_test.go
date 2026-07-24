@@ -148,6 +148,46 @@ func TestRuntimeRoutesAllAnswerabilityBranches(t *testing.T) {
 	}
 }
 
+func TestRuntimeRunCollectsEinoNodeTrace(t *testing.T) {
+	runtime, err := NewRuntime(
+		context.Background(),
+		&fakeRetriever{
+			documents: []*schema.Document{testDocument("chunk-1", 0.91, 1)},
+		},
+		&fakeChatModel{answer: "请在设置页选择“重置密码”。[S1]"},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime returned error: %v", err)
+	}
+	output, err := runtime.Run(
+		context.Background(),
+		Input{Query: "如何重置密码？"},
+	)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	names := make(map[string]bool)
+	for _, step := range output.Trace {
+		if step.Status != "completed" ||
+			step.CompletedAt.Before(step.StartedAt) ||
+			step.DurationMillis < 0 {
+			t.Fatalf("invalid Trace step: %#v", step)
+		}
+		names[step.Name] = true
+	}
+	for _, expected := range []string{
+		nodeValidateInput,
+		nodeRetrieveKnowledge,
+		nodeAnswerabilityGate,
+		nodeGroundedGenerate,
+	} {
+		if !names[expected] {
+			t.Fatalf("Trace missing node %s: %#v", expected, output.Trace)
+		}
+	}
+}
+
 func TestRuntimeReturnsOnlySourcesUsedByAnswer(t *testing.T) {
 	retriever := &fakeRetriever{documents: []*schema.Document{
 		testDocument("chunk-1", 0.94, 1),

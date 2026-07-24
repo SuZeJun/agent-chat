@@ -65,6 +65,7 @@ func TestSendMessageBuildsAtomicSubmission(t *testing.T) {
 	service := newTestService(t, repository, now)
 
 	result, err := service.SendMessage(context.Background(), Request{
+		RequestID:       "request-1",
 		CustomerID:      " customer-1 ",
 		ConversationID:  " conversation-1 ",
 		ClientMessageID: " client-message-1 ",
@@ -113,6 +114,7 @@ func TestSendMessageReturnsExistingIdempotentResult(t *testing.T) {
 			},
 			Run: domain.AgentRun{
 				ID:              "existing-run",
+				RequestID:       "request-existing",
 				ConversationID:  "conversation-1",
 				SourceMessageID: "existing-message",
 				Status:          domain.RunStatusRunning,
@@ -125,6 +127,7 @@ func TestSendMessageReturnsExistingIdempotentResult(t *testing.T) {
 	service := newTestService(t, repository, now)
 
 	result, err := service.SendMessage(context.Background(), Request{
+		RequestID:       "request-replay",
 		CustomerID:      "customer-1",
 		ConversationID:  "conversation-1",
 		ClientMessageID: "client-message-1",
@@ -207,6 +210,7 @@ func TestSendMessageMapsRepositoryFailures(t *testing.T) {
 			service := newTestService(t, repository, time.Now())
 
 			_, err := service.SendMessage(context.Background(), Request{
+				RequestID:       "request-error",
 				CustomerID:      "customer-1",
 				ConversationID:  "conversation-1",
 				ClientMessageID: "client-message-1",

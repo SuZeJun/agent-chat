@@ -20,6 +20,12 @@ type RouterOptions struct {
 	Database            DatabaseHealth
 	DatabasePingTimeout time.Duration
 	Environment         string
+	KnowledgeBase       KnowledgeBaseCreator
+	FAQImport           FAQImportService
+	Conversation        ConversationCreator
+	Message             MessageSender
+	RunEvents           RunEventReader
+	RunTrace            RunTraceReader
 }
 
 // NewRouter 创建包含中间件、存活检查和就绪检查的 Gin Engine。
@@ -54,5 +60,13 @@ func NewRouter(options RouterOptions) *gin.Engine {
 			"checks": gin.H{"database": "ok"},
 		})
 	})
+	registerKnowledgeRoutes(router, options.KnowledgeBase, options.FAQImport)
+	registerChatRoutes(
+		router,
+		options.Conversation,
+		options.Message,
+		options.RunEvents,
+	)
+	registerRunTraceRoute(router, options.RunTrace)
 	return router
 }

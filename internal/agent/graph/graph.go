@@ -51,36 +51,42 @@ func NewRuntime(
 	if err := graph.AddLambdaNode(
 		nodeValidateInput,
 		compose.InvokableLambda(deps.validateInput),
+		compose.WithNodeName(nodeValidateInput),
 	); err != nil {
 		return nil, fmt.Errorf("add validate input node: %w", err)
 	}
 	if err := graph.AddLambdaNode(
 		nodeRetrieveKnowledge,
 		compose.InvokableLambda(deps.retrieveKnowledge),
+		compose.WithNodeName(nodeRetrieveKnowledge),
 	); err != nil {
 		return nil, fmt.Errorf("add retrieve knowledge node: %w", err)
 	}
 	if err := graph.AddLambdaNode(
 		nodeAnswerabilityGate,
 		compose.InvokableLambda(deps.answerabilityGate),
+		compose.WithNodeName(nodeAnswerabilityGate),
 	); err != nil {
 		return nil, fmt.Errorf("add answerability gate node: %w", err)
 	}
 	if err := graph.AddLambdaNode(
 		nodeGroundedGenerate,
 		compose.InvokableLambda(deps.groundedGenerate),
+		compose.WithNodeName(nodeGroundedGenerate),
 	); err != nil {
 		return nil, fmt.Errorf("add grounded generate node: %w", err)
 	}
 	if err := graph.AddLambdaNode(
 		nodeAskClarification,
 		compose.InvokableLambda(askClarification),
+		compose.WithNodeName(nodeAskClarification),
 	); err != nil {
 		return nil, fmt.Errorf("add ask clarification node: %w", err)
 	}
 	if err := graph.AddLambdaNode(
 		nodeRefuseAnswer,
 		compose.InvokableLambda(refuseAnswer),
+		compose.WithNodeName(nodeRefuseAnswer),
 	); err != nil {
 		return nil, fmt.Errorf("add refuse answer node: %w", err)
 	}
@@ -127,7 +133,14 @@ func (runtime *Runtime) Invoke(
 
 // Run 使用默认 Eino 运行选项执行 Graph，供 Application Runtime Port 调用。
 func (runtime *Runtime) Run(ctx context.Context, input Input) (Output, error) {
-	return runtime.Invoke(ctx, input)
+	collector := newTraceCollector()
+	output, err := runtime.Invoke(
+		ctx,
+		input,
+		compose.WithCallbacks(collector.handler()),
+	)
+	output.Trace = collector.snapshot()
+	return output, err
 }
 
 func (deps dependencies) validateInput(

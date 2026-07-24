@@ -1,6 +1,6 @@
 # Agent Chat
 
-面向企业客服与技术支持团队的 AI 服务运营平台。项目当前处于工程脚手架阶段，产品和架构设计见 `docs/`，代码入口和文件职责见 `docs/CODEBASE.md`。
+面向企业客服与技术支持团队的 AI 服务运营平台。当前已完成 FAQ RAG 最小闭环，产品和架构设计见 `docs/`，代码入口和文件职责见 `docs/CODEBASE.md`。
 
 ## 当前能力
 
@@ -16,6 +16,9 @@
 - `knowledge.index` Handler 批量生成 embedding、写入切片并单调发布最新版本
 - 服务端绑定知识库、支持 Top-K/阈值/元数据过滤的 Eino Retriever
 - `agent.run` Handler 执行 RAG Graph，并原子保存 Assistant Message、Graph Result 和有序运行事件
+- FAQ CSV 内容幂等导入、逐行索引状态查询和客户隔离的聊天/SSE API
+- Eino Callback 节点、模型耗时和 Token Trace
+- 10 条实际执行 Eino Graph 的 pytest 离线安全评估
 - 带 advisory lock、文件名和 SHA-256 校验的事务迁移
 - `/healthz` 与 `/readyz`
 - 结构化日志、服务端请求 ID、受控 panic 恢复和优雅退出
@@ -50,6 +53,36 @@ curl http://127.0.0.1:8080/readyz
 
 Worker 默认单进程串行执行任务。`WORKER_JOB_TIMEOUT` 限制单次执行时间，`WORKER_LOCK_TIMEOUT` 必须更长，用于恢复进程崩溃遗留的租约；重试使用 `WORKER_RETRY_BASE_DELAY` 到 `WORKER_RETRY_MAX_DELAY` 之间的有界指数退避。
 
+## RAG 演示 API
+
+MVP 使用 `X-Admin-ID` 和 `X-Customer-ID` 作为本地演示身份头；它们用于验证服务端资源绑定，不代表生产认证方案。
+
+FAQ CSV 使用 UTF-8，支持以下两种表头，最多 1000 行、2 MiB：
+
+```csv
+question,answer
+如何重置密码？,请在设置页选择重置密码。
+```
+
+```csv
+question,answer,source_url
+如何重置密码？,请在设置页选择重置密码。,https://docs.example.com/reset
+```
+
+主要接口：
+
+```text
+POST /api/v1/admin/knowledge-bases
+POST /api/v1/admin/knowledge-bases/{knowledgeBaseId}/faq-imports
+GET  /api/v1/admin/knowledge-bases/{knowledgeBaseId}/faq-imports/{importId}
+POST /api/v1/conversations
+POST /api/v1/conversations/{conversationId}/messages
+GET  /api/v1/agent-runs/{runId}/events
+GET  /api/v1/admin/agent-runs/{runId}
+```
+
+FAQ 导入接口使用 `multipart/form-data` 的 `file` 字段。同一知识库重复上传规范化内容相同的 CSV 会返回原 `importId`，不会重复创建文档、版本或 Job。SSE 使用持久化 `sequence` 作为 `id`，客户端可通过 `Last-Event-ID` 断线续传。
+
 ## Windows PowerShell
 
 原生 Windows 推荐使用：
@@ -65,6 +98,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
 ```bash
 make deps
 make check
+make eval
 make test-integration
 make dev
 ```
@@ -78,20 +112,19 @@ go test ./...
 go vet ./...
 go build ./cmd/api
 go build ./cmd/worker
+python -m pytest evals/runner
 docker compose config --quiet
 ```
 
 真实迁移集成测试需要设置 `TEST_DATABASE_URL`；CI 和 `scripts/check.ps1` 会自动执行。若使用过未带迁移校验和的旧版开发数据库，可执行 `docker compose down -v` 后重建本地数据卷。
 
-## 下一阶段
-
-下一阶段实现第一条 RAG 纵向闭环：
+## RAG 纵向闭环
 
 ```text
 FAQ 导入与索引（已完成）
   -> Eino Retriever（已完成）
-  -> Eino RAG Graph
-  -> Answerability Gate
-  -> 带引用流式回答
-  -> Trace
+  -> Eino RAG Graph（已完成）
+  -> Answerability Gate（已完成）
+  -> 带引用 SSE 回答（已完成）
+  -> Trace 与 Eval（已完成）
 ```

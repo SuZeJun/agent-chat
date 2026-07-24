@@ -9,6 +9,12 @@ import (
 	"net/http"
 	"time"
 
+	chatapplication "agent-chat/internal/application/chat"
+	"agent-chat/internal/application/knowledgebase"
+	"agent-chat/internal/application/knowledgeimport"
+	knowledgedomain "agent-chat/internal/domain/knowledge"
+	chatpg "agent-chat/internal/infrastructure/persistence/chat"
+	knowledgepg "agent-chat/internal/infrastructure/persistence/knowledge"
 	httptransport "agent-chat/internal/transport/http"
 )
 
@@ -20,11 +26,66 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 	}
 	defer runtime.close()
 
+	knowledgeRepository := knowledgepg.NewRepository(runtime.database)
+	idGenerator := knowledgeimport.UUIDGenerator{}
+	knowledgeBaseService, err := knowledgebase.NewService(
+		knowledgeRepository,
+		idGenerator,
+	)
+	if err != nil {
+		return err
+	}
+	importService, err := knowledgeimport.NewService(
+		knowledgeRepository,
+		knowledgedomain.EmbeddingIdentity{
+			Provider:   "zhipu",
+			Model:      runtime.config.Models.Embedding.Model,
+			Dimensions: runtime.config.Models.Embedding.Dimensions,
+		},
+		idGenerator,
+		knowledgeimport.SystemClock{},
+	)
+	if err != nil {
+		return err
+	}
+	chatRepository := chatpg.NewRepository(runtime.database)
+	chatIDGenerator := chatapplication.UUIDGenerator{}
+	chatClock := chatapplication.SystemClock{}
+	conversationService, err := chatapplication.NewConversationService(
+		chatRepository,
+		chatIDGenerator,
+		chatClock,
+	)
+	if err != nil {
+		return err
+	}
+	messageService, err := chatapplication.NewService(
+		chatRepository,
+		chatIDGenerator,
+		chatClock,
+	)
+	if err != nil {
+		return err
+	}
+	eventService, err := chatapplication.NewEventService(chatRepository)
+	if err != nil {
+		return err
+	}
+	traceService, err := chatapplication.NewTraceService(chatRepository)
+	if err != nil {
+		return err
+	}
 	router := httptransport.NewRouter(httptransport.RouterOptions{
 		Logger:              runtime.logger,
 		Database:            runtime.database,
 		DatabasePingTimeout: runtime.config.Database.PingTimeout,
 		Environment:         runtime.config.App.Environment,
+		KnowledgeBase:       knowledgeBaseService,
+		FAQImport:           importService,
+		Conversation:        conversationService,
+		Message:             messageService,
+		RunEvents:           eventService,
+		RunTrace:            traceService,
 	})
 	server := &http.Server{
 		Addr:              runtime.config.App.HTTPAddress,

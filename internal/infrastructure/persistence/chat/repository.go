@@ -146,15 +146,17 @@ func (repository *Repository) StartRun(
 	_, err = transaction.Exec(ctx, `
 		INSERT INTO agent_runs (
 			id,
+			request_id,
 			conversation_id,
 			source_message_id,
 			status,
 			created_at,
 			updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`,
 		submission.Run.ID,
+		submission.Run.RequestID,
 		submission.Run.ConversationID,
 		submission.Run.SourceMessageID,
 		submission.Run.Status,
@@ -251,6 +253,7 @@ func loadExistingRun(
 			message.content,
 			message.created_at,
 			run.id,
+			run.request_id,
 			run.conversation_id,
 			run.source_message_id,
 			run.status,
@@ -269,6 +272,7 @@ func loadExistingRun(
 		&result.Message.Content,
 		&result.Message.CreatedAt,
 		&result.Run.ID,
+		&result.Run.RequestID,
 		&result.Run.ConversationID,
 		&result.Run.SourceMessageID,
 		&result.Run.Status,

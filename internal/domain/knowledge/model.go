@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 )
 
 const (
 	maxIDLength    = 64
 	maxNameLength  = 255
 	maxTitleLength = 500
+	maxImportRows  = 1000
 )
 
 // ErrNotFound 表示目标知识实体不存在。
@@ -66,6 +68,98 @@ const (
 
 // IndexJobType 是持久化知识索引任务的稳定类型。
 const IndexJobType = "knowledge.index"
+
+// FAQImport 表示一次经过规范化和内容去重的 FAQ CSV 导入。
+type FAQImport struct {
+	ID              string
+	KnowledgeBaseID string
+	SourceName      string
+	ContentSHA256   string
+	Items           []FAQImportItem
+	CreatedAt       time.Time
+}
+
+// FAQImportItem 表示导入中一行 FAQ 对应的文档、首版本和索引任务。
+type FAQImportItem struct {
+	RowNumber int
+	Document  Document
+	Version   Version
+	JobID     string
+}
+
+// Validate 校验整个 CSV 导入可以在一个事务中安全创建。
+func (knowledgeImport FAQImport) Validate() error {
+	if err := validateID("FAQ import ID", knowledgeImport.ID); err != nil {
+		return err
+	}
+	if err := validateID("knowledge base ID", knowledgeImport.KnowledgeBaseID); err != nil {
+		return err
+	}
+	sourceName := strings.TrimSpace(knowledgeImport.SourceName)
+	if sourceName == "" || len(sourceName) > maxNameLength {
+		return fmt.Errorf("FAQ import source name must be 1-%d characters", maxNameLength)
+	}
+	if !validChecksum(knowledgeImport.ContentSHA256) {
+		return errors.New("FAQ import checksum is invalid")
+	}
+	if len(knowledgeImport.Items) == 0 || len(knowledgeImport.Items) > maxImportRows {
+		return fmt.Errorf("FAQ import must contain 1-%d rows", maxImportRows)
+	}
+	if knowledgeImport.CreatedAt.IsZero() {
+		return errors.New("FAQ import created time is required")
+	}
+	for index, item := range knowledgeImport.Items {
+		if item.RowNumber != index+2 {
+			return errors.New("FAQ import row numbers must follow the CSV header")
+		}
+		if err := item.Document.Validate(); err != nil {
+			return fmt.Errorf("invalid FAQ import document: %w", err)
+		}
+		if item.Document.KnowledgeBaseID != knowledgeImport.KnowledgeBaseID ||
+			item.Document.Type != DocumentTypeFAQ {
+			return errors.New("FAQ import document scope is inconsistent")
+		}
+		if err := item.Version.Validate(); err != nil {
+			return fmt.Errorf("invalid FAQ import version: %w", err)
+		}
+		if item.Version.DocumentID != item.Document.ID || item.Version.Number != 1 {
+			return errors.New("FAQ import version must be the document first version")
+		}
+		if err := validateID("FAQ import job ID", item.JobID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// FAQImportItemStatus 是管理员可见的一行索引状态。
+type FAQImportItemStatus struct {
+	RowNumber  int
+	DocumentID string
+	VersionID  string
+	Status     IndexStatus
+	ErrorCode  string
+}
+
+// FAQImportSnapshot 汇总一次导入及所有行的当前索引状态。
+type FAQImportSnapshot struct {
+	ID              string
+	KnowledgeBaseID string
+	SourceName      string
+	ContentSHA256   string
+	Status          IndexStatus
+	TotalRows       int
+	ReadyRows       int
+	FailedRows      int
+	Items           []FAQImportItemStatus
+	CreatedAt       time.Time
+}
+
+// CreateFAQImportResult 返回新建或内容幂等重放对应的导入。
+type CreateFAQImportResult struct {
+	Snapshot  FAQImportSnapshot
+	Duplicate bool
+}
 
 // EmbeddingIdentity 唯一标识一个向量空间。
 type EmbeddingIdentity struct {
@@ -229,6 +323,19 @@ func (version Version) Validate() error {
 func ContentChecksum(content string) string {
 	checksum := sha256.Sum256([]byte(content))
 	return fmt.Sprintf("%x", checksum)
+}
+
+func validChecksum(checksum string) bool {
+	if len(checksum) != sha256.Size*2 {
+		return false
+	}
+	for _, character := range checksum {
+		if (character < '0' || character > '9') &&
+			(character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // Chunk 表示一个可检索知识切片。

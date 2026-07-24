@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	einoretriever "github.com/cloudwego/eino/components/retriever"
@@ -73,13 +74,27 @@ type Citation struct {
 	Excerpt string `json:"excerpt"`
 }
 
+// TraceStep 是通过 Eino Callback 收集的节点或模型调用元数据。
+type TraceStep struct {
+	Name             string    `json:"name"`
+	Component        string    `json:"component"`
+	ComponentType    string    `json:"componentType"`
+	Status           string    `json:"status"`
+	StartedAt        time.Time `json:"startedAt"`
+	CompletedAt      time.Time `json:"completedAt"`
+	DurationMillis   int64     `json:"durationMillis"`
+	PromptTokens     int       `json:"promptTokens,omitempty"`
+	CompletionTokens int       `json:"completionTokens,omitempty"`
+}
+
 // Output 是 Graph 的结构化结果，供后续 SSE、持久化 Trace 和 UI 直接映射。
 type Output struct {
-	Answer     string     `json:"answer"`
-	Assessment Assessment `json:"assessment"`
-	Citations  []Citation `json:"citations"`
-	NextAction NextAction `json:"nextAction,omitempty"`
-	NodePath   []string   `json:"nodePath"`
+	Answer     string      `json:"answer"`
+	Assessment Assessment  `json:"assessment"`
+	Citations  []Citation  `json:"citations"`
+	NextAction NextAction  `json:"nextAction,omitempty"`
+	NodePath   []string    `json:"nodePath"`
+	Trace      []TraceStep `json:"trace"`
 }
 
 // Config 控制 Answerability 阈值和进入模型 Prompt 的上下文上限。
@@ -197,6 +212,7 @@ func (state runState) output() Output {
 		Citations:  citations,
 		NextAction: state.nextAction,
 		NodePath:   append([]string(nil), state.nodePath...),
+		Trace:      []TraceStep{},
 	}
 }
 

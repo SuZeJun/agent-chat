@@ -197,6 +197,7 @@ func (message Message) Validate() error {
 // AgentRun 是由一条客户消息唯一触发的 Agent 执行记录。
 type AgentRun struct {
 	ID              string
+	RequestID       string
 	ConversationID  string
 	SourceMessageID string
 	Status          RunStatus
@@ -218,6 +219,9 @@ func (run AgentRun) Validate() error {
 // ValidateSnapshot 校验任意生命周期阶段的 Agent Run 基础字段。
 func (run AgentRun) ValidateSnapshot() error {
 	if err := validateID("agent run ID", run.ID); err != nil {
+		return err
+	}
+	if err := validateID("request ID", run.RequestID); err != nil {
 		return err
 	}
 	if err := validateID("conversation ID", run.ConversationID); err != nil {
@@ -256,6 +260,18 @@ type RunEvent struct {
 	Type      EventType
 	Payload   map[string]any
 	CreatedAt time.Time
+}
+
+// RunEventPage 是一次按 sequence 增量读取的事件页及当前 Run 状态。
+type RunEventPage struct {
+	RunID  string
+	Status RunStatus
+	Events []RunEvent
+}
+
+// Terminal 判断事件源是否已经不会再产生新事件。
+func (page RunEventPage) Terminal() bool {
+	return page.Status == RunStatusCompleted || page.Status == RunStatusFailed
 }
 
 // Validate 校验运行事件的类型、顺序和 JSON Payload。
@@ -389,6 +405,65 @@ type EventDraft struct {
 	CreatedAt time.Time
 }
 
+// RunStepDraft 是由 Eino Callback 生成、待随 Run 终态原子持久化的 Trace。
+type RunStepDraft struct {
+	Name             string
+	Component        string
+	ComponentType    string
+	Status           string
+	StartedAt        time.Time
+	CompletedAt      time.Time
+	DurationMillis   int64
+	PromptTokens     int
+	CompletionTokens int
+}
+
+// RunStep 是已经持久化并带稳定顺序的 Trace 节点。
+type RunStep struct {
+	Order int
+	RunStepDraft
+}
+
+// RunTraceSnapshot 是管理员查看一次 Agent Run 所需的脱敏 Trace。
+type RunTraceSnapshot struct {
+	RunID          string
+	RequestID      string
+	ConversationID string
+	Status         RunStatus
+	Result         map[string]any
+	ErrorCode      string
+	Steps          []RunStep
+	CreatedAt      time.Time
+	StartedAt      *time.Time
+	CompletedAt    *time.Time
+}
+
+// Validate 校验 Trace 不包含负耗时、负 Token 或不完整节点身份。
+func (step RunStepDraft) Validate() error {
+	if strings.TrimSpace(step.Name) == "" || len(step.Name) > 100 {
+		return errors.New("run step name must be 1-100 characters")
+	}
+	if strings.TrimSpace(step.Component) == "" || len(step.Component) > 100 {
+		return errors.New("run step component must be 1-100 characters")
+	}
+	if len(step.ComponentType) > 255 {
+		return errors.New("run step component type exceeds 255 characters")
+	}
+	if step.Status != "completed" && step.Status != "failed" {
+		return errors.New("run step status is invalid")
+	}
+	if step.StartedAt.IsZero() || step.CompletedAt.IsZero() ||
+		step.CompletedAt.Before(step.StartedAt) {
+		return errors.New("run step timestamps are invalid")
+	}
+	if step.DurationMillis < 0 ||
+		step.PromptTokens < 0 ||
+		step.CompletionTokens < 0 {
+		return errors.New("run step metrics must not be negative")
+	}
+	return nil
+}
+
 // Validate 校验事件草稿，但不要求调用方预先计算 sequence。
 func (event EventDraft) Validate() error {
 	candidate := RunEvent{
@@ -435,6 +510,7 @@ type CompleteRunCommand struct {
 	Message     Message
 	Result      map[string]any
 	Events      []EventDraft
+	Steps       []RunStepDraft
 	CompletedAt time.Time
 }
 
@@ -465,6 +541,11 @@ func (command CompleteRunCommand) Validate() error {
 	}
 	for _, event := range command.Events {
 		if err := event.Validate(); err != nil {
+			return err
+		}
+	}
+	for _, step := range command.Steps {
+		if err := step.Validate(); err != nil {
 			return err
 		}
 	}

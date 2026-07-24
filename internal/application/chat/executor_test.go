@@ -131,6 +131,12 @@ func TestExecuteRunCompletesGraphResultAndEvents(t *testing.T) {
 	if command.Result["answer"] != runner.output.Answer {
 		t.Fatalf("Graph result was not persisted: %#v", command.Result)
 	}
+	if len(command.Steps) != 1 ||
+		command.Steps[0].Name != "grounded_generate" ||
+		command.Steps[0].PromptTokens != 120 ||
+		command.Steps[0].CompletionTokens != 30 {
+		t.Fatalf("Graph Trace was not mapped: %#v", command.Steps)
+	}
 	if repository.failureCalls != 0 {
 		t.Fatal("successful execution recorded a failure")
 	}
@@ -265,6 +271,7 @@ func testRunSource(status domain.RunStatus, now time.Time) domain.RunSource {
 	return domain.RunSource{
 		Run: domain.AgentRun{
 			ID:              "run-1",
+			RequestID:       "request-1",
 			ConversationID:  "conversation-1",
 			SourceMessageID: "message-1",
 			Status:          status,
@@ -285,6 +292,7 @@ func testRunSource(status domain.RunStatus, now time.Time) domain.RunSource {
 }
 
 func testGraphOutput() agentgraph.Output {
+	startedAt := time.Date(2026, 7, 25, 9, 59, 59, 0, time.UTC)
 	return agentgraph.Output{
 		Answer: "请在设置页重置密码。[S1]",
 		Assessment: agentgraph.Assessment{
@@ -316,6 +324,19 @@ func testGraphOutput() agentgraph.Output {
 			"retrieve_knowledge",
 			"answerability_gate",
 			"grounded_generate",
+		},
+		Trace: []agentgraph.TraceStep{
+			{
+				Name:             "grounded_generate",
+				Component:        "ChatModel",
+				ComponentType:    "deepseek/deepseek-v4-flash",
+				Status:           "completed",
+				StartedAt:        startedAt,
+				CompletedAt:      startedAt.Add(250 * time.Millisecond),
+				DurationMillis:   250,
+				PromptTokens:     120,
+				CompletionTokens: 30,
+			},
 		},
 	}
 }

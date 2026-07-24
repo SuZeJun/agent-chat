@@ -42,6 +42,7 @@ func TestSendMessageLifecycleAgainstPostgres(t *testing.T) {
 	})
 	service := newChatService(t, repository)
 	request := application.Request{
+		RequestID:       "request-idempotency",
 		CustomerID:      "customer-1",
 		ConversationID:  "conversation-1",
 		ClientMessageID: "client-message-1",
@@ -171,6 +172,7 @@ func TestConcurrentClientMessageRetriesCreateOneRun(t *testing.T) {
 	})
 	service := newChatService(t, repository)
 	request := application.Request{
+		RequestID:       "request-concurrent",
 		CustomerID:      "customer-concurrent",
 		ConversationID:  "conversation-concurrent",
 		ClientMessageID: "client-message-concurrent",
@@ -486,6 +488,7 @@ func testStartSubmission(
 		},
 		Run: domain.AgentRun{
 			ID:              runID,
+			RequestID:       "request-" + runID,
 			ConversationID:  conversationID,
 			SourceMessageID: messageID,
 			Status:          domain.RunStatusPending,

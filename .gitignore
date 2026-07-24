@@ -5,10 +5,14 @@
 .gomodcache/
 .gotmp/
 .idea/
+.pytest_cache/
 .vscode/
+__pycache__/
 bin/
 *.exe
+*.py[cod]
 coverage.out
-evals/reports/
+evals/reports/*
+!evals/reports/.gitkeep
 web/.next/
 web/node_modules/

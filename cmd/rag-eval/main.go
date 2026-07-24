@@ -1,0 +1,234 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	agentgraph "agent-chat/internal/agent/graph"
+	"agent-chat/internal/agent/retrieval"
+
+	"github.com/cloudwego/eino/components/model"
+	einoretriever "github.com/cloudwego/eino/components/retriever"
+	"github.com/cloudwego/eino/schema"
+)
+
+type evalCase struct {
+	Name     string    `json:"name"`
+	Query    string    `json:"query"`
+	Scores   []float64 `json:"scores"`
+	Decision string    `json:"decision"`
+	Reason   string    `json:"reason"`
+}
+
+type caseResult struct {
+	Name             string `json:"name"`
+	Passed           bool   `json:"passed"`
+	ExpectedDecision string `json:"expectedDecision"`
+	ActualDecision   string `json:"actualDecision"`
+	ExpectedReason   string `json:"expectedReason"`
+	ActualReason     string `json:"actualReason"`
+	CitationCount    int    `json:"citationCount"`
+	ModelCalls       int    `json:"modelCalls"`
+	Error            string `json:"error,omitempty"`
+}
+
+type report struct {
+	Total   int          `json:"total"`
+	Passed  int          `json:"passed"`
+	Failed  int          `json:"failed"`
+	Results []caseResult `json:"results"`
+}
+
+type fixtureRetriever struct {
+	documents []*schema.Document
+}
+
+func (retriever *fixtureRetriever) Retrieve(
+	_ context.Context,
+	_ string,
+	_ ...einoretriever.Option,
+) ([]*schema.Document, error) {
+	return retriever.documents, nil
+}
+
+type fixtureModel struct {
+	calls int
+}
+
+func (chatModel *fixtureModel) Generate(
+	_ context.Context,
+	_ []*schema.Message,
+	_ ...model.Option,
+) (*schema.Message, error) {
+	chatModel.calls++
+	return schema.AssistantMessage("这是由企业知识支持的回答。[S1]", nil), nil
+}
+
+func main() {
+	var casesPath string
+	var jsonPath string
+	var markdownPath string
+	flag.StringVar(&casesPath, "cases", "evals/cases/rag_mvp.json", "评估集路径")
+	flag.StringVar(&jsonPath, "json", "evals/reports/latest.json", "JSON 报告路径")
+	flag.StringVar(&markdownPath, "markdown", "evals/reports/latest.md", "Markdown 报告路径")
+	flag.Parse()
+
+	evaluation, err := run(casesPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if err := writeReports(evaluation, jsonPath, markdownPath); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	fmt.Printf(
+		"RAG Eval: total=%d passed=%d failed=%d\n",
+		evaluation.Total,
+		evaluation.Passed,
+		evaluation.Failed,
+	)
+	if evaluation.Failed > 0 {
+		os.Exit(1)
+	}
+}
+
+func run(casesPath string) (report, error) {
+	content, err := os.ReadFile(casesPath)
+	if err != nil {
+		return report{}, fmt.Errorf("read Eval cases: %w", err)
+	}
+	var cases []evalCase
+	if err := json.Unmarshal(content, &cases); err != nil {
+		return report{}, fmt.Errorf("decode Eval cases: %w", err)
+	}
+	if len(cases) < 10 {
+		return report{}, fmt.Errorf("RAG Eval requires at least 10 cases")
+	}
+
+	evaluation := report{
+		Total:   len(cases),
+		Results: make([]caseResult, 0, len(cases)),
+	}
+	for _, item := range cases {
+		result := evaluate(item)
+		if result.Passed {
+			evaluation.Passed++
+		} else {
+			evaluation.Failed++
+		}
+		evaluation.Results = append(evaluation.Results, result)
+	}
+	return evaluation, nil
+}
+
+func evaluate(item evalCase) caseResult {
+	documents := make([]*schema.Document, len(item.Scores))
+	for index, score := range item.Scores {
+		document := &schema.Document{
+			ID:      fmt.Sprintf("chunk-%d", index+1),
+			Content: fmt.Sprintf("问题：%s\n答案：知识答案 %d", item.Query, index+1),
+			MetaData: map[string]any{
+				retrieval.MetadataDocumentID:   fmt.Sprintf("document-%d", index+1),
+				retrieval.MetadataVersionID:    fmt.Sprintf("version-%d", index+1),
+				retrieval.MetadataDocumentType: "faq",
+				retrieval.MetadataTitle:        fmt.Sprintf("FAQ %d", index+1),
+				retrieval.MetadataRank:         index + 1,
+			},
+		}
+		document.WithScore(score)
+		documents[index] = document
+	}
+	chatModel := &fixtureModel{}
+	runtime, err := agentgraph.NewRuntime(
+		context.Background(),
+		&fixtureRetriever{documents: documents},
+		chatModel,
+		agentgraph.DefaultConfig(),
+	)
+	result := caseResult{
+		Name:             item.Name,
+		ExpectedDecision: item.Decision,
+		ExpectedReason:   item.Reason,
+	}
+	if err != nil {
+		result.Error = "runtime_build_failed"
+		return result
+	}
+	output, err := runtime.Run(context.Background(), agentgraph.Input{Query: item.Query})
+	if err != nil {
+		result.Error = "runtime_execution_failed"
+		return result
+	}
+	result.ActualDecision = string(output.Assessment.Decision)
+	result.ActualReason = output.Assessment.Reason
+	result.CitationCount = len(output.Citations)
+	result.ModelCalls = chatModel.calls
+
+	answerable := item.Decision == string(agentgraph.DecisionAnswerable)
+	citationSafe := (!answerable && len(output.Citations) == 0) ||
+		(answerable &&
+			len(output.Citations) == 1 &&
+			output.Citations[0].SourceID == "S1")
+	modelSafe := (!answerable && chatModel.calls == 0) ||
+		(answerable && chatModel.calls == 1)
+	result.Passed = result.ActualDecision == item.Decision &&
+		result.ActualReason == item.Reason &&
+		citationSafe &&
+		modelSafe
+	if !result.Passed {
+		result.Error = "safety_gate_failed"
+	}
+	return result
+}
+
+func writeReports(evaluation report, jsonPath string, markdownPath string) error {
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
+		return fmt.Errorf("create JSON report directory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(markdownPath), 0o755); err != nil {
+		return fmt.Errorf("create Markdown report directory: %w", err)
+	}
+	encoded, err := json.MarshalIndent(evaluation, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode JSON report: %w", err)
+	}
+	encoded = append(encoded, '\n')
+	if err := os.WriteFile(jsonPath, encoded, 0o644); err != nil {
+		return fmt.Errorf("write JSON report: %w", err)
+	}
+
+	var markdown strings.Builder
+	markdown.WriteString("# RAG MVP Eval\n\n")
+	fmt.Fprintf(
+		&markdown,
+		"- Total: %d\n- Passed: %d\n- Failed: %d\n\n",
+		evaluation.Total,
+		evaluation.Passed,
+		evaluation.Failed,
+	)
+	markdown.WriteString("| Case | Decision | Result |\n")
+	markdown.WriteString("| --- | --- | --- |\n")
+	for _, result := range evaluation.Results {
+		status := "PASS"
+		if !result.Passed {
+			status = "FAIL"
+		}
+		fmt.Fprintf(
+			&markdown,
+			"| %s | %s | %s |\n",
+			strings.ReplaceAll(result.Name, "|", `\|`),
+			result.ActualDecision,
+			status,
+		)
+	}
+	if err := os.WriteFile(markdownPath, []byte(markdown.String()), 0o644); err != nil {
+		return fmt.Errorf("write Markdown report: %w", err)
+	}
+	return nil
+}

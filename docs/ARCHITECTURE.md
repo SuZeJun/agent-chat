@@ -204,7 +204,8 @@ Eino Retriever 边界：
 - `DSLInfo` 只接受 `metadata` JSON 包含过滤，不接收 SQL 或任意表达式。
 - 服务端必需过滤条件不可被调用级参数覆盖，且在构造时深拷贝。
 - Eino `Document` 保存 chunk、document、version、类型、标题、分数和排序，供后续引用与 Trace 使用。
-- 当前组件已保留 Trace 所需输出；真正的节点耗时与上下文采用情况将在 RAG Graph Callback 阶段持久化。
+- Eino Callback 已记录实际执行的 Lambda 节点与 ChatModel，保存状态、耗时和 Token；不保存完整 Prompt、API Key 或供应商错误正文。
+- 检索证据、Answerability 决策和最终引用继续通过有序 Run Event 持久化，管理员 Run 详情将二者组合展示。
 
 ### 5.2 首版不采用
 

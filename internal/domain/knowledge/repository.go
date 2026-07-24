@@ -9,6 +9,10 @@ import (
 type Repository interface {
 	// CreateBase 创建知识库。
 	CreateBase(ctx context.Context, base Base) error
+	// CreateFAQImport 原子创建 FAQ 文档、首版本和索引任务，并按内容校验和幂等。
+	CreateFAQImport(ctx context.Context, knowledgeImport FAQImport) (CreateFAQImportResult, error)
+	// LoadFAQImport 读取管理员可见的导入和逐行索引状态。
+	LoadFAQImport(ctx context.Context, knowledgeBaseID string, importID string) (FAQImportSnapshot, error)
 	// CreateDocument 创建尚未发布版本的逻辑文档。
 	CreateDocument(ctx context.Context, document Document) error
 	// CreateVersionAndIndexJob 原子创建不可变版本和持久化索引任务。

@@ -168,6 +168,7 @@ func (executor *Executor) ExecuteRun(
 		},
 		Result:      result,
 		Events:      executor.completionEvents(messageID, output, completedAt),
+		Steps:       graphTraceSteps(output.Trace),
 		CompletedAt: completedAt,
 	}
 	if err := executor.repository.CompleteRun(ctx, command); err != nil {
@@ -186,6 +187,24 @@ func (executor *Executor) ExecuteRun(
 		return newFailure("complete_agent_run_failed", true, err)
 	}
 	return nil
+}
+
+func graphTraceSteps(trace []agentgraph.TraceStep) []domain.RunStepDraft {
+	steps := make([]domain.RunStepDraft, len(trace))
+	for index, step := range trace {
+		steps[index] = domain.RunStepDraft{
+			Name:             step.Name,
+			Component:        step.Component,
+			ComponentType:    step.ComponentType,
+			Status:           step.Status,
+			StartedAt:        step.StartedAt,
+			CompletedAt:      step.CompletedAt,
+			DurationMillis:   step.DurationMillis,
+			PromptTokens:     step.PromptTokens,
+			CompletionTokens: step.CompletionTokens,
+		}
+	}
+	return steps
 }
 
 func (executor *Executor) completionEvents(

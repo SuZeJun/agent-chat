@@ -39,6 +39,7 @@ func TestRunExecutionLifecycleAgainstPostgres(t *testing.T) {
 	})
 	service := newChatService(t, repository)
 	started, err := service.SendMessage(ctx, application.Request{
+		RequestID:       "request-execution",
 		CustomerID:      "customer-execution",
 		ConversationID:  "conversation-execution",
 		ClientMessageID: "client-execution",
@@ -84,12 +85,37 @@ func TestRunExecutionLifecycleAgainstPostgres(t *testing.T) {
 			executionEvent("event-citation", domain.EventTypeMessageCitation, completedAt, map[string]any{"sourceId": "S1"}),
 			executionEvent("event-completed", domain.EventTypeRunCompleted, completedAt, map[string]any{"status": "completed"}),
 		},
+		Steps: []domain.RunStepDraft{
+			{
+				Name:             "grounded_generate",
+				Component:        "ChatModel",
+				ComponentType:    "deepseek/deepseek-v4-flash",
+				Status:           "completed",
+				StartedAt:        completedAt.Add(-250 * time.Millisecond),
+				CompletedAt:      completedAt,
+				DurationMillis:   250,
+				PromptTokens:     120,
+				CompletionTokens: 30,
+			},
+		},
 		CompletedAt: completedAt,
 	}
 	if err := repository.CompleteRun(ctx, command); err != nil {
 		t.Fatalf("complete run: %v", err)
 	}
 	assertCompletedRun(t, ctx, pool, started.RunID, command)
+	trace, err := repository.LoadRunTrace(ctx, started.RunID)
+	if err != nil {
+		t.Fatalf("load run Trace: %v", err)
+	}
+	if trace.RequestID != "request-execution" ||
+		trace.ConversationID != "conversation-execution" ||
+		len(trace.Steps) != 1 ||
+		trace.Steps[0].Name != "grounded_generate" ||
+		trace.Steps[0].PromptTokens != 120 ||
+		trace.Result["answer"] != command.Result["answer"] {
+		t.Fatalf("unexpected persisted Trace: %#v", trace)
+	}
 
 	replayed, err := repository.BeginRunAttempt(ctx, domain.BeginRunAttempt{
 		RunID:   started.RunID,
@@ -132,6 +158,7 @@ func TestRunFailureRetriesAndTerminatesAgainstPostgres(t *testing.T) {
 	})
 	service := newChatService(t, repository)
 	started, err := service.SendMessage(ctx, application.Request{
+		RequestID:       "request-failure",
 		CustomerID:      "customer-failure",
 		ConversationID:  "conversation-failure",
 		ClientMessageID: "client-failure",
@@ -232,6 +259,7 @@ func TestCompleteRunRejectsConversationTakeover(t *testing.T) {
 	})
 	service := newChatService(t, repository)
 	started, err := service.SendMessage(ctx, application.Request{
+		RequestID:       "request-takeover",
 		CustomerID:      "customer-takeover",
 		ConversationID:  "conversation-takeover",
 		ClientMessageID: "client-takeover",

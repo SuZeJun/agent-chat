@@ -60,6 +60,7 @@ func (err *ModelProviderError) CanRetry() bool {
 // DeepSeekChatModel 为 Eino ChatModel 增加供应商错误脱敏边界。
 type DeepSeekChatModel struct {
 	inner einomodel.ToolCallingChatModel
+	model string
 }
 
 // NewDeepSeekChatModel 创建使用 OpenAI 兼容协议的 DeepSeek Eino ChatModel。
@@ -112,7 +113,12 @@ func newDeepSeekChatModel(
 	if err != nil {
 		return nil, sanitizeModelProviderError("create", err)
 	}
-	return &DeepSeekChatModel{inner: chatModel}, nil
+	return &DeepSeekChatModel{inner: chatModel, model: cfg.Model}, nil
+}
+
+// GetType 返回不含密钥和端点的 Provider/模型身份，供 Eino Trace 展示。
+func (chatModel *DeepSeekChatModel) GetType() string {
+	return deepSeekProvider + "/" + chatModel.model
 }
 
 // Generate 生成完整回复，并在错误离开 Provider 边界前完成脱敏。
@@ -157,7 +163,7 @@ func (chatModel *DeepSeekChatModel) WithTools(
 	if err != nil {
 		return nil, sanitizeModelProviderError("bind tools", err)
 	}
-	return &DeepSeekChatModel{inner: modelWithTools}, nil
+	return &DeepSeekChatModel{inner: modelWithTools, model: chatModel.model}, nil
 }
 
 func sanitizeModelProviderError(operation string, err error) error {

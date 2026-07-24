@@ -146,6 +146,7 @@ func testSubmission(now time.Time) StartRunSubmission {
 		},
 		Run: AgentRun{
 			ID:              "run-1",
+			RequestID:       "request-1",
 			ConversationID:  "conversation-1",
 			SourceMessageID: "message-1",
 			Status:          RunStatusPending,

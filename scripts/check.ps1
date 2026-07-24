@@ -27,5 +27,6 @@ if ($unformatted) {
 
 Invoke-NativeCommand -FilePath "go" -ArgumentList @("test", "-count=1", "./...")
 Invoke-NativeCommand -FilePath "go" -ArgumentList @("vet", "./...")
+Invoke-NativeCommand -FilePath "python" -ArgumentList @("-m", "pytest", "evals/runner")
 & "$PSScriptRoot/build.ps1"
 Invoke-NativeCommand -FilePath "docker" -ArgumentList @("compose", "config", "--quiet")

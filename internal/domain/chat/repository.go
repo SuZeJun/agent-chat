@@ -14,4 +14,8 @@ type Repository interface {
 	CompleteRun(context.Context, CompleteRunCommand) error
 	// RecordRunFailure 记录可重试尝试或将 Run 终结为 failed。
 	RecordRunFailure(context.Context, RecordRunFailureCommand) error
+	// LoadRunEvents 在客户授权范围内按 sequence 增量读取 Run 事件。
+	LoadRunEvents(context.Context, string, string, int, int) (RunEventPage, error)
+	// LoadRunTrace 读取管理员可见的脱敏 Run 详情与 Eino Trace。
+	LoadRunTrace(context.Context, string) (RunTraceSnapshot, error)
 }

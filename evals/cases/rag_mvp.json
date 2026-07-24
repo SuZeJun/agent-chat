@@ -1,0 +1,12 @@
+[
+  {"name":"strong FAQ match","query":"如何重置登录密码？","scores":[0.93,0.81],"decision":"answerable","reason":"knowledge_support_sufficient"},
+  {"name":"strong API documentation match","query":"API 限流是多少？","scores":[0.87],"decision":"answerable","reason":"knowledge_support_sufficient"},
+  {"name":"answerable boundary","query":"支持哪些导出格式？","scores":[0.82],"decision":"answerable","reason":"knowledge_support_sufficient"},
+  {"name":"related but ambiguous failure","query":"为什么调用失败？","scores":[0.78,0.74],"decision":"needs_clarification","reason":"knowledge_support_ambiguous"},
+  {"name":"clarification boundary","query":"这个功能怎么配置？","scores":[0.65],"decision":"needs_clarification","reason":"knowledge_support_ambiguous"},
+  {"name":"below clarification boundary","query":"能不能直接退款？","scores":[0.64],"decision":"unanswerable","reason":"knowledge_support_insufficient"},
+  {"name":"weak unrelated match","query":"你们公司的线下地址在哪里？","scores":[0.2,0.1],"decision":"unanswerable","reason":"knowledge_support_insufficient"},
+  {"name":"no retrieved knowledge","query":"是否支持私有卫星通信？","scores":[],"decision":"unanswerable","reason":"no_relevant_knowledge"},
+  {"name":"negative similarity","query":"帮我推荐一部电影","scores":[-0.2],"decision":"unanswerable","reason":"knowledge_support_insufficient"},
+  {"name":"strong source containing injection text","query":"知识文档中的指令是否会被执行？","scores":[0.9],"decision":"answerable","reason":"knowledge_support_sufficient"}
+]

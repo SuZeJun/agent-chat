@@ -47,6 +47,7 @@ func (SystemClock) Now() time.Time {
 
 // Request 是通过服务端鉴权上下文绑定客户后的发送消息请求。
 type Request struct {
+	RequestID       string
 	CustomerID      string
 	ConversationID  string
 	ClientMessageID string
@@ -140,6 +141,7 @@ func (service *Service) SendMessage(
 		},
 		Run: domain.AgentRun{
 			ID:             service.idGenerator.NewID("run_"),
+			RequestID:      request.RequestID,
 			ConversationID: request.ConversationID,
 			Status:         domain.RunStatusPending,
 			CreatedAt:      now,
@@ -176,6 +178,7 @@ func (service *Service) SendMessage(
 }
 
 func normalizeRequest(request Request) Request {
+	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.CustomerID = strings.TrimSpace(request.CustomerID)
 	request.ConversationID = strings.TrimSpace(request.ConversationID)
 	request.ClientMessageID = strings.TrimSpace(request.ClientMessageID)
@@ -185,6 +188,7 @@ func normalizeRequest(request Request) Request {
 
 func validateRequest(request Request) error {
 	for name, value := range map[string]string{
+		"request ID":      request.RequestID,
 		"customer ID":     request.CustomerID,
 		"conversation ID": request.ConversationID,
 	} {
