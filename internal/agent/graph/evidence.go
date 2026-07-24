@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+// selectSources 校验排序与来源元数据，并限制进入 Prompt 的证据数量和总字符数。
 func selectSources(
 	documents []*schema.Document,
 	maxDocuments int,
@@ -50,6 +51,7 @@ func selectSources(
 	return sources, nil
 }
 
+// sourceFromDocument 将 Eino Document 转换为不可缺字段的内部证据，拒绝伪造来源。
 func sourceFromDocument(document *schema.Document) (source, error) {
 	if document == nil {
 		return source{}, errors.New("knowledge document is nil")

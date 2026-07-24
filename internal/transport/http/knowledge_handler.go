@@ -27,11 +27,13 @@ type FAQImportService interface {
 	GetStatus(context.Context, string, string) (domain.FAQImportSnapshot, error)
 }
 
+// createKnowledgeBaseRequest 是管理员创建知识库的显式输入 DTO。
 type createKnowledgeBaseRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
+// knowledgeBaseResponse 隔离 Domain 实体与对外知识库响应格式。
 type knowledgeBaseResponse struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -39,6 +41,7 @@ type knowledgeBaseResponse struct {
 	Status      string `json:"status"`
 }
 
+// faqImportResponse 返回异步导入任务的初始状态和幂等重放标记。
 type faqImportResponse struct {
 	ID         string `json:"id"`
 	Status     string `json:"status"`
@@ -48,6 +51,7 @@ type faqImportResponse struct {
 	Duplicate  bool   `json:"duplicate,omitempty"`
 }
 
+// faqImportStatusResponse 汇总一次 CSV 导入及每行索引进度。
 type faqImportStatusResponse struct {
 	ID         string                  `json:"id"`
 	SourceName string                  `json:"sourceName"`
@@ -59,6 +63,7 @@ type faqImportStatusResponse struct {
 	CreatedAt  string                  `json:"createdAt"`
 }
 
+// faqImportItemResponse 描述一行 FAQ 对应文档版本的索引状态。
 type faqImportItemResponse struct {
 	RowNumber  int    `json:"rowNumber"`
 	DocumentID string `json:"documentId"`
@@ -67,6 +72,7 @@ type faqImportItemResponse struct {
 	ErrorCode  string `json:"errorCode,omitempty"`
 }
 
+// registerKnowledgeRoutes 只注册已完成依赖组装的知识管理接口。
 func registerKnowledgeRoutes(
 	router *gin.Engine,
 	baseCreator KnowledgeBaseCreator,
@@ -88,6 +94,7 @@ func registerKnowledgeRoutes(
 	}
 }
 
+// createKnowledgeBaseHandler 完成管理员身份、DTO 和 Application 错误映射。
 func createKnowledgeBaseHandler(service KnowledgeBaseCreator) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		if _, ok := requireHeaderIdentity(ctx, adminIDHeader, "admin_auth_required"); !ok {
@@ -115,6 +122,7 @@ func createKnowledgeBaseHandler(service KnowledgeBaseCreator) gin.HandlerFunc {
 	}
 }
 
+// importFAQHandler 在 Transport 层限制上传大小，再把原始 CSV 交给 Application 校验。
 func importFAQHandler(service FAQImportService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		if _, ok := requireHeaderIdentity(ctx, adminIDHeader, "admin_auth_required"); !ok {
@@ -161,6 +169,7 @@ func importFAQHandler(service FAQImportService) gin.HandlerFunc {
 	}
 }
 
+// getFAQImportHandler 将持久化 Job 与版本状态聚合为管理员可读进度。
 func getFAQImportHandler(service FAQImportService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		if _, ok := requireHeaderIdentity(ctx, adminIDHeader, "admin_auth_required"); !ok {

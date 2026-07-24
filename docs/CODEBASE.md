@@ -27,6 +27,35 @@ cmd/worker/main.go
   -> internal/infrastructure/persistence/knowledge/
 ```
 
+FAQ 导入与索引链路：
+
+```text
+internal/transport/http/knowledge_handler.go
+  -> internal/application/knowledgeimport/service.go
+  -> internal/infrastructure/persistence/knowledge/import.go
+  -> jobs 表中的 knowledge.index
+  -> internal/infrastructure/jobs/knowledge_handler.go
+  -> internal/application/knowledgeindex/indexer.go
+  -> internal/infrastructure/model/zhipu.go
+  -> internal/infrastructure/persistence/knowledge/repository.go
+```
+
+客户问答与 SSE 链路：
+
+```text
+internal/transport/http/chat_handler.go
+  -> internal/application/chat/service.go
+  -> internal/infrastructure/persistence/chat/repository.go
+  -> jobs 表中的 agent.run
+  -> internal/infrastructure/jobs/agent_run_handler.go
+  -> internal/application/chat/executor.go
+  -> internal/agent/graph/
+  -> internal/infrastructure/persistence/chat/execution.go
+  -> internal/transport/http/chat_handler.go 的 SSE
+```
+
+阅读具体函数时，优先关注注释中的事务、幂等、权限、Answerability、引用和 Trace 约束；参数转换、简单字段映射等私有辅助函数不会为了注释而重复描述代码。
+
 ## 根目录
 
 | 文件 | 职责 |
@@ -227,8 +256,9 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | 文件 | 职责 |
 | --- | --- |
 | `scripts/native.ps1` | 在 Windows PowerShell 5.1 中可靠传播原生命令退出码 |
+| `scripts/env.ps1` | 加载本地 `.env`，且不覆盖当前进程已显式设置的环境变量 |
 | `scripts/build.ps1` | 构建 API 和 Worker Windows 二进制 |
-| `scripts/dev.ps1` | 等待 PostgreSQL 后启动 API 与 Worker |
+| `scripts/dev.ps1` | 加载本地配置，等待 PostgreSQL 后启动 API 与 Worker |
 | `scripts/check.ps1` | 运行格式、测试、vet、构建和 Compose 检查 |
 | `cmd/rag-eval/main.go` | 实际执行 Eino Graph 并生成 JSON/Markdown 安全评估报告 |
 | `evals/cases/rag_mvp.json` | 版本化 RAG MVP 决策、引用和模型调用评估集 |

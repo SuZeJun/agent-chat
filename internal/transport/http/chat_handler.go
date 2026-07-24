@@ -44,21 +44,25 @@ type RunTraceReader interface {
 	GetRunTrace(context.Context, string) (domain.RunTraceSnapshot, error)
 }
 
+// createConversationRequest 指定会话服务端绑定的知识库。
 type createConversationRequest struct {
 	KnowledgeBaseID string `json:"knowledgeBaseId"`
 }
 
+// createConversationResponse 返回客户后续发送消息所需的会话标识。
 type createConversationResponse struct {
 	ID              string `json:"id"`
 	KnowledgeBaseID string `json:"knowledgeBaseId"`
 	Status          string `json:"status"`
 }
 
+// sendMessageRequest 使用客户端消息 ID 保证重复提交幂等。
 type sendMessageRequest struct {
 	ClientMessageID string `json:"clientMessageId"`
 	Content         string `json:"content"`
 }
 
+// sendMessageResponse 返回已持久化消息和异步 Agent Run 的关联标识。
 type sendMessageResponse struct {
 	MessageID string `json:"messageId"`
 	RunID     string `json:"runId"`
@@ -66,6 +70,7 @@ type sendMessageResponse struct {
 	Duplicate bool   `json:"duplicate"`
 }
 
+// runEventResponse 是 SSE data 字段中的可去重事件结构。
 type runEventResponse struct {
 	EventID   string         `json:"eventId"`
 	RunID     string         `json:"runId"`
@@ -75,6 +80,7 @@ type runEventResponse struct {
 	CreatedAt string         `json:"createdAt"`
 }
 
+// runTraceResponse 是管理员可见的脱敏 Run 结果和 Trace。
 type runTraceResponse struct {
 	RunID          string                 `json:"runId"`
 	RequestID      string                 `json:"requestId"`
@@ -88,6 +94,7 @@ type runTraceResponse struct {
 	CompletedAt    string                 `json:"completedAt,omitempty"`
 }
 
+// runTraceStepResponse 仅暴露节点身份、耗时和 Token，不包含 Prompt 或 Provider 正文。
 type runTraceStepResponse struct {
 	Order            int    `json:"order"`
 	Name             string `json:"name"`
@@ -101,6 +108,7 @@ type runTraceStepResponse struct {
 	CompletedAt      string `json:"completedAt"`
 }
 
+// registerChatRoutes 组装客户会话、消息和 SSE 路由。
 func registerChatRoutes(
 	router *gin.Engine,
 	conversationCreator ConversationCreator,
@@ -122,6 +130,7 @@ func registerChatRoutes(
 	}
 }
 
+// registerRunTraceRoute 单独注册管理员 Trace，避免与客户资源权限混淆。
 func registerRunTraceRoute(router *gin.Engine, traceReader RunTraceReader) {
 	if traceReader == nil {
 		return
@@ -202,6 +211,7 @@ func sendMessageHandler(service MessageSender) gin.HandlerFunc {
 	}
 }
 
+// streamRunEventsHandler 先读取持久化事件，再按 Last-Event-ID 增量轮询直到 Run 终态。
 func streamRunEventsHandler(service RunEventReader) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		customerID, ok := requireHeaderIdentity(
@@ -323,6 +333,7 @@ func getRunTraceHandler(service RunTraceReader) gin.HandlerFunc {
 	}
 }
 
+// writeRunEvent 使用持久化 sequence 作为 SSE id，支持客户端去重和断线续传。
 func writeRunEvent(ctx *gin.Context, event domain.RunEvent) error {
 	payload, err := json.Marshal(runEventResponse{
 		EventID:   event.ID,
@@ -345,6 +356,7 @@ func writeRunEvent(ctx *gin.Context, event domain.RunEvent) error {
 	return err
 }
 
+// parseLastEventID 将客户端游标限制为非负 sequence，空值表示从头读取。
 func parseLastEventID(value string) (int, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

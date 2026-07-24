@@ -143,6 +143,7 @@ func (runtime *Runtime) Run(ctx context.Context, input Input) (Output, error) {
 	return output, err
 }
 
+// validateInput 在任何检索或模型调用前规范化并限制用户问题。
 func (deps dependencies) validateInput(
 	_ context.Context,
 	input Input,
@@ -157,6 +158,7 @@ func (deps dependencies) validateInput(
 	}, nil
 }
 
+// retrieveKnowledge 调用绑定当前知识库的 Retriever，并校验证据排序和上下文上限。
 func (deps dependencies) retrieveKnowledge(
 	ctx context.Context,
 	state runState,
@@ -178,6 +180,7 @@ func (deps dependencies) retrieveKnowledge(
 	return state, nil
 }
 
+// answerabilityGate 生成确定性 Assessment，后续分支只能读取该结果。
 func (deps dependencies) answerabilityGate(
 	_ context.Context,
 	state runState,
@@ -187,6 +190,7 @@ func (deps dependencies) answerabilityGate(
 	return state, nil
 }
 
+// routeAnswerability 将三类决策映射到生成、澄清或拒答节点，不允许隐式兜底生成。
 func routeAnswerability(
 	_ context.Context,
 	state runState,
@@ -207,6 +211,7 @@ func routeAnswerability(
 	}
 }
 
+// groundedGenerate 仅在 Gate 允许时调用模型，并拒绝没有有效来源标记的回答。
 func (deps dependencies) groundedGenerate(
 	ctx context.Context,
 	state runState,
@@ -243,6 +248,7 @@ func (deps dependencies) groundedGenerate(
 	return state.output(), nil
 }
 
+// askClarification 返回稳定追问文案，不调用模型，也不生成引用。
 func askClarification(
 	_ context.Context,
 	state runState,
@@ -253,6 +259,7 @@ func askClarification(
 	return state.output(), nil
 }
 
+// refuseAnswer 在证据不足时明确拒绝猜测，并提示转人工路径。
 func refuseAnswer(
 	_ context.Context,
 	state runState,

@@ -17,6 +17,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+// evalCase 描述一个不依赖真实 Provider 的 RAG 路由评估样本。
 type evalCase struct {
 	Name     string    `json:"name"`
 	Query    string    `json:"query"`
@@ -25,6 +26,7 @@ type evalCase struct {
 	Reason   string    `json:"reason"`
 }
 
+// caseResult 记录单个样本的实际决策、调用约束和失败原因。
 type caseResult struct {
 	Name             string `json:"name"`
 	Passed           bool   `json:"passed"`
@@ -37,6 +39,7 @@ type caseResult struct {
 	Error            string `json:"error,omitempty"`
 }
 
+// report 汇总全部样本，并作为 JSON 与 Markdown 报告的共同数据源。
 type report struct {
 	Total   int          `json:"total"`
 	Passed  int          `json:"passed"`
@@ -44,10 +47,12 @@ type report struct {
 	Results []caseResult `json:"results"`
 }
 
+// fixtureRetriever 将评估文件中的固定分数转换为 Eino 检索结果。
 type fixtureRetriever struct {
 	documents []*schema.Document
 }
 
+// Retrieve 返回当前评估样本预设的有序证据，避免离线 Eval 依赖外部服务。
 func (retriever *fixtureRetriever) Retrieve(
 	_ context.Context,
 	_ string,
@@ -56,10 +61,12 @@ func (retriever *fixtureRetriever) Retrieve(
 	return retriever.documents, nil
 }
 
+// fixtureModel 记录是否发生模型调用，并返回带固定引用的受约束回答。
 type fixtureModel struct {
 	calls int
 }
 
+// Generate 为 answerable 分支提供确定性回答，其他分支不应调用该方法。
 func (chatModel *fixtureModel) Generate(
 	_ context.Context,
 	_ []*schema.Message,
@@ -69,6 +76,7 @@ func (chatModel *fixtureModel) Generate(
 	return schema.AssistantMessage("这是由企业知识支持的回答。[S1]", nil), nil
 }
 
+// main 解析报告路径，并通过退出码向 pytest 和 CI 暴露评估门槛结果。
 func main() {
 	var casesPath string
 	var jsonPath string
@@ -98,6 +106,7 @@ func main() {
 	}
 }
 
+// run 加载全部用例并实际执行 Eino Graph，而不是仅比较静态期望值。
 func run(casesPath string) (report, error) {
 	content, err := os.ReadFile(casesPath)
 	if err != nil {
@@ -127,6 +136,7 @@ func run(casesPath string) (report, error) {
 	return evaluation, nil
 }
 
+// evaluate 同时验证决策、引用和模型调用次数，防止非回答分支绕过安全门。
 func evaluate(item evalCase) caseResult {
 	documents := make([]*schema.Document, len(item.Scores))
 	for index, score := range item.Scores {
@@ -187,6 +197,7 @@ func evaluate(item evalCase) caseResult {
 	return result
 }
 
+// writeReports 从同一评估结果生成机器可读和人工可读报告。
 func writeReports(evaluation report, jsonPath string, markdownPath string) error {
 	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
 		return fmt.Errorf("create JSON report directory: %w", err)

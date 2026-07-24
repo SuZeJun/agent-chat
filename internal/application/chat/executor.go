@@ -189,6 +189,7 @@ func (executor *Executor) ExecuteRun(
 	return nil
 }
 
+// graphTraceSteps 将 Agent 层 Trace 映射为不依赖 Eino 的 Domain 持久化契约。
 func graphTraceSteps(trace []agentgraph.TraceStep) []domain.RunStepDraft {
 	steps := make([]domain.RunStepDraft, len(trace))
 	for index, step := range trace {
@@ -207,6 +208,7 @@ func graphTraceSteps(trace []agentgraph.TraceStep) []domain.RunStepDraft {
 	return steps
 }
 
+// completionEvents 按固定顺序生成检索、决策、回答、引用和终态事件。
 func (executor *Executor) completionEvents(
 	messageID string,
 	output agentgraph.Output,
@@ -267,6 +269,7 @@ func (executor *Executor) completionEvents(
 	return events
 }
 
+// failAttempt 记录稳定错误码；仅永久错误或最后一次尝试会结束 Run。
 func (executor *Executor) failAttempt(
 	ctx context.Context,
 	request ExecuteRunRequest,
@@ -312,6 +315,7 @@ func (executor *Executor) failAttempt(
 	return newFailure(code, retryable, cause)
 }
 
+// graphResult 通过 JSON 边界生成可安全持久化和返回的 Graph 快照。
 func graphResult(output agentgraph.Output) (map[string]any, error) {
 	encoded, err := json.Marshal(output)
 	if err != nil {

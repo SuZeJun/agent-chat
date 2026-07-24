@@ -220,6 +220,7 @@ type sanitizedModelTransport struct {
 	base http.RoundTripper
 }
 
+// RoundTrip 在错误响应进入 Eino SDK 前替换供应商正文，避免 Trace 或日志泄露原始内容。
 func (transport *sanitizedModelTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	response, err := transport.base.RoundTrip(request)
 	if err != nil {

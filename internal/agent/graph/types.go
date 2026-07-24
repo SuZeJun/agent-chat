@@ -180,12 +180,14 @@ func retryAllowed(err error) bool {
 	return errors.As(err, &retryability) && retryability.CanRetry()
 }
 
+// dependencies 是 Graph 编译后共享的无状态依赖和安全配置。
 type dependencies struct {
 	retriever einoretriever.Retriever
 	chatModel ChatModel
 	config    Config
 }
 
+// runState 是单次 Graph 执行期间在节点间传递的内部状态。
 type runState struct {
 	query      string
 	sources    []source
@@ -196,11 +198,13 @@ type runState struct {
 	nodePath   []string
 }
 
+// source 同时保存可持久化证据和进入 Prompt 的原始内容。
 type source struct {
 	evidence Evidence
 	content  string
 }
 
+// output 复制切片字段，避免调用方修改 Graph 内部状态。
 func (state runState) output() Output {
 	citations := append([]Citation(nil), state.citations...)
 	if citations == nil {
@@ -216,6 +220,7 @@ func (state runState) output() Output {
 	}
 }
 
+// normalizeQuery 去除首尾空白并限制长度，防止无效输入触发外部调用。
 func normalizeQuery(query string) (string, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {

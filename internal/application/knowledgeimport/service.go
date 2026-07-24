@@ -239,12 +239,14 @@ func (service *Service) GetStatus(
 	return snapshot, nil
 }
 
+// faqRow 是经过表头映射但尚未完成业务校验的一行 CSV。
 type faqRow struct {
 	Question  string `json:"question"`
 	Answer    string `json:"answer"`
 	SourceURL string `json:"sourceUrl,omitempty"`
 }
 
+// parseFAQCSV 校验 UTF-8、表头、行数和重复问题，并基于规范化内容计算幂等校验和。
 func parseFAQCSV(content []byte) ([]faqRow, string, error) {
 	if len(content) == 0 || len(content) > maxCSVBytes {
 		return nil, "", errors.New("CSV size is invalid")
@@ -312,6 +314,7 @@ func parseFAQCSV(content []byte) ([]faqRow, string, error) {
 	return rows, hex.EncodeToString(checksum[:]), nil
 }
 
+// validateHeader 只允许两个固定表头，返回是否包含可选 source_url 列。
 func validateHeader(header []string) (bool, error) {
 	if len(header) != 2 && len(header) != 3 {
 		return false, errors.New("CSV header must be question,answer[,source_url]")
@@ -328,6 +331,7 @@ func validateHeader(header []string) (bool, error) {
 	return len(header) == 3, nil
 }
 
+// validate 校验 FAQ 字段长度，并将来源 URL 限制为绝对 HTTP(S) 地址。
 func (row faqRow) validate() error {
 	if row.Question == "" || utf8.RuneCountInString(row.Question) > maxQuestionRunes {
 		return fmt.Errorf("question must be 1-%d characters", maxQuestionRunes)

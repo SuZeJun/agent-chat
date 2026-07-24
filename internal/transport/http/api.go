@@ -16,16 +16,19 @@ const (
 	maxJSONBodyBytes = 64 << 10
 )
 
+// apiErrorBody 是所有 HTTP 失败响应的统一外层结构。
 type apiErrorBody struct {
 	Error     apiErrorDetail `json:"error"`
 	RequestID string         `json:"requestId"`
 }
 
+// apiErrorDetail 仅暴露稳定错误码和可展示消息，不包含内部 cause。
 type apiErrorDetail struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
+// writeAPIError 将稳定业务错误与当前 request ID 一起写回客户端。
 func writeAPIError(ctx *gin.Context, status int, code string, message string) {
 	ctx.AbortWithStatusJSON(status, apiErrorBody{
 		Error: apiErrorDetail{
@@ -36,6 +39,7 @@ func writeAPIError(ctx *gin.Context, status int, code string, message string) {
 	})
 }
 
+// requireHeaderIdentity 读取本地演示身份头；资源归属仍由服务端持久化关系决定。
 func requireHeaderIdentity(
 	ctx *gin.Context,
 	header string,
@@ -49,6 +53,7 @@ func requireHeaderIdentity(
 	return identity, true
 }
 
+// decodeJSONBody 拒绝未知字段和尾随 JSON，防止客户端拼写错误被静默忽略。
 func decodeJSONBody(ctx *gin.Context, target any) error {
 	reader := io.LimitReader(ctx.Request.Body, maxJSONBodyBytes+1)
 	decoder := json.NewDecoder(reader)
