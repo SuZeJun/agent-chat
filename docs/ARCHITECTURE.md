@@ -187,6 +187,15 @@ Agent Runtime 不拥有：
 - 超长结构块使用 120 rune 重叠窗口，避免边界事实完全断开。
 - Worker 按 64 条一批调用 embedding Provider，切片 ID 由版本和位置稳定生成。
 
+基础 RAG Graph 使用确定性 Answerability Gate：
+
+- 最强证据分数达到 `0.82` 才进入受知识约束的模型生成。
+- 分数位于 `0.65` 到 `0.82` 之间时返回 `needs_clarification`，不调用模型。
+- 低于 `0.65` 或没有证据时返回 `unanswerable`，不调用模型并提供转人工动作。
+- 检索内容以不可信 JSON 数据进入 Prompt，内容中的指令不得改变系统策略。
+- 模型回答必须携带合法来源标记；服务端只返回回答显式标注且能映射到检索上下文的引用。
+- 阈值属于首版可评估基线，修改时必须同步 Answerability Eval Case 并检查宏平均 F1。
+
 Eino Retriever 边界：
 
 - 构造时绑定服务端授权后的知识库 ID，调用级 `Index` 只能省略或传入同值。
@@ -207,6 +216,9 @@ Eino Retriever 边界：
 - 处于实验阶段且会增加迁移成本的 API
 
 ### 5.3 Agent Graph
+
+当前代码先实现知识问答子图，即 `Retrieve -> Answerability Gate -> Generate / Clarify / Refuse`。
+意图识别、工具调用、审批和转人工节点按后续阶段接入，不为了展示框架提前放入空节点。
 
 ```mermaid
 flowchart TD

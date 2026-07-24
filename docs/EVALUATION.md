@@ -35,6 +35,10 @@ FAQ/Markdown 切片 Eval Case 位于 `internal/application/knowledgeindex/testda
 检索 Eval Case 位于 `internal/application/knowledgeretrieve/testdata/retrieval_cases.json`，
 固定问题、Top-K、阈值、元数据过滤和期望来源；由 `service_test.go` 验证 Application 检索契约。
 
+Answerability Eval Case 位于 `internal/agent/graph/testdata/answerability_cases.json`，
+固定问题、最强证据分数、三类路由结果和稳定原因；由 `answerability_test.go` 验证阈值边界。
+Graph 测试同时验证非回答分支不调用模型、引用只来自回答显式标注的合法来源，以及检索内容始终作为不可信 JSON 数据进入 Prompt。
+
 ### 2.2 离线数据集
 
 固定输入、期望行为和知识来源，运行真实检索与模型。

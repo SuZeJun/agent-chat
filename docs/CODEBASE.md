@@ -111,6 +111,15 @@ cmd/worker/main.go
 | `internal/agent/retrieval/doc.go` | Eino Knowledge Retriever 包说明 |
 | `internal/agent/retrieval/retriever.go` | 将 Application 检索结果适配为带来源和分数的 Eino Document |
 | `internal/agent/retrieval/retriever_test.go` | 验证 Eino Options、资源绑定、防覆盖和 Document 映射 |
+| `internal/agent/graph/doc.go` | Eino RAG Graph 包说明 |
+| `internal/agent/graph/graph.go` | 编排检索、Answerability Gate、受约束生成、追问和拒答路由 |
+| `internal/agent/graph/answerability.go` | 按明确阈值生成三类 Answerability 决策 |
+| `internal/agent/graph/evidence.go` | 校验检索排序与来源元数据，并限制进入 Prompt 的上下文 |
+| `internal/agent/graph/prompt.go` | 构造不可信知识数据边界并校验回答来源标记 |
+| `internal/agent/graph/types.go` | 定义 Graph 输入、输出、证据、引用、配置和稳定错误 |
+| `internal/agent/graph/answerability_test.go` | 读取版本化 Eval Case 验证 Answerability 边界 |
+| `internal/agent/graph/graph_test.go` | 验证 Graph 路由、引用映射、Prompt Injection 边界和错误脱敏 |
+| `internal/agent/graph/testdata/answerability_cases.json` | 固定三类 Answerability 路由 Eval Case |
 
 ## Knowledge Persistence
 
