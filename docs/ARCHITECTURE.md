@@ -290,6 +290,7 @@ pending -> running -> succeeded
 
 - 客户消息使用客户端消息 ID 去重。
 - Agent Run 对来源消息建立唯一约束。
+- 同一会话内并发提交由会话行锁串行化；同一客户端消息 ID 只有内容一致时才视为重放。
 - 创建工单使用确认请求 ID 作为幂等键。
 - Resume 使用审批版本或原子状态更新防止重复消费。
 
@@ -301,6 +302,16 @@ pending -> running -> succeeded
 - 审批确认和 Resume Job 创建。
 - 转人工事件、会话状态更新和通知任务创建。
 - 文档版本创建和索引任务创建。
+
+当前聊天启动事务一次写入：
+
+1. `customer` 消息。
+2. 唯一关联来源消息的 `pending` Agent Run。
+3. `sequence = 1` 的 `run.status` 事件。
+4. 以 Run ID 为幂等键的 `agent.run` Job。
+5. 会话最后活跃时间。
+
+会话的 `customer_id` 来自服务端鉴权主体，不接受模型决定；客户资料表和客户创建流程在后续身份接入阶段实现。
 
 ## 7. 数据模型
 
@@ -327,6 +338,7 @@ pending -> running -> succeeded
 - `agent_configs`
 - `agent_config_versions`
 - `agent_runs`
+- `run_events`
 - `agent_run_steps`
 - `retrieval_traces`
 - `tool_calls`

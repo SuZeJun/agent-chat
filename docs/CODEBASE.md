@@ -88,6 +88,15 @@ cmd/worker/main.go
 | `internal/domain/knowledge/repository.go` | 定义版本写入、索引完成、原子发布和活动切片检索 Port |
 | `internal/domain/knowledge/model_test.go` | 验证内容校验和、向量有限值和 Embedding 身份比较 |
 
+## Chat Domain
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/domain/chat/doc.go` | Chat Domain 包职责说明 |
+| `internal/domain/chat/model.go` | 定义会话、消息、Agent Run、运行事件、状态和原子提交契约 |
+| `internal/domain/chat/repository.go` | 定义会话创建和消息启动 Run 的持久化 Port |
+| `internal/domain/chat/model_test.go` | 验证聊天状态、关联 ID 和初始事件约束 |
+
 ## Knowledge Application
 
 | 文件 | 职责 |
@@ -103,6 +112,14 @@ cmd/worker/main.go
 | `internal/application/knowledgeretrieve/service.go` | 编排问题 embedding、向量空间校验和活动切片检索 |
 | `internal/application/knowledgeretrieve/service_test.go` | 验证请求、空结果、过滤、错误分类和检索 Eval Case |
 | `internal/application/knowledgeretrieve/testdata/retrieval_cases.json` | 固定来源期望和元数据过滤检索 Eval Case |
+
+## Chat Application
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/application/chat/doc.go` | Chat Application 包职责说明 |
+| `internal/application/chat/service.go` | 规范化客户消息并编排 Message、Run、Event 和 Job 原子创建 |
+| `internal/application/chat/service_test.go` | 验证提交构造、幂等结果、请求校验和稳定错误映射 |
 
 ## Agent Runtime
 
@@ -128,6 +145,14 @@ cmd/worker/main.go
 | `internal/infrastructure/persistence/knowledge/doc.go` | Knowledge PostgreSQL Repository 包说明 |
 | `internal/infrastructure/persistence/knowledge/repository.go` | 实现版本与 Job 原子创建、切片替换、发布和 pgvector 检索 |
 | `internal/infrastructure/persistence/knowledge/repository_integration_test.go` | 使用真实 PostgreSQL 验证版本生命周期、原子回滚和活动版本检索 |
+
+## Chat Persistence
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/infrastructure/persistence/chat/doc.go` | Chat PostgreSQL Repository 包说明 |
+| `internal/infrastructure/persistence/chat/repository.go` | 使用会话行锁原子创建 Message、Run、首事件和持久化 Job |
+| `internal/infrastructure/persistence/chat/repository_integration_test.go` | 使用真实 PostgreSQL 验证幂等、客户隔离、并发去重和整笔回滚 |
 
 ## Worker
 
@@ -162,6 +187,7 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `migrations/embed.go` | 使用 `go:embed` 将 SQL 迁移打入二进制 |
 | `migrations/000001_init.sql` | 创建 pgvector 扩展、Job 表、约束和索引 |
 | `migrations/000002_knowledge.sql` | 创建知识库、文档版本、1024 维切片、活动版本约束和 HNSW 索引 |
+| `migrations/000003_chat.sql` | 创建会话、消息、Agent Run、运行事件、状态约束和幂等索引 |
 
 已经提交或执行的迁移文件不可直接改写；后续 Schema 变化必须新增版本文件。
 
