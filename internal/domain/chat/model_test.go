@@ -76,6 +76,63 @@ func TestConversationStatusValid(t *testing.T) {
 	}
 }
 
+func TestRunExecutionCommandsValidate(t *testing.T) {
+	now := time.Now().UTC()
+	begin := BeginRunAttempt{
+		RunID:   "run-1",
+		Attempt: 1,
+		Event: EventDraft{
+			ID:        "event-start",
+			Type:      EventTypeRunStarted,
+			Payload:   map[string]any{"attempt": 1},
+			CreatedAt: now,
+		},
+	}
+	if err := begin.Validate(); err != nil {
+		t.Fatalf("valid begin command rejected: %v", err)
+	}
+
+	completion := CompleteRunCommand{
+		RunID: "run-1",
+		Message: Message{
+			ID:             "message-assistant",
+			ConversationID: "conversation-1",
+			AgentRunID:     "run-1",
+			Role:           MessageRoleAssistant,
+			Content:        "回答",
+			CreatedAt:      now,
+		},
+		Result: map[string]any{"answer": "回答"},
+		Events: []EventDraft{
+			testEventDraft("event-retrieval", EventTypeRetrievalCompleted, now),
+			testEventDraft("event-gate", EventTypeAnswerabilityDecided, now),
+			testEventDraft("event-delta", EventTypeMessageDelta, now),
+			testEventDraft("event-completed", EventTypeRunCompleted, now),
+		},
+		CompletedAt: now,
+	}
+	if err := completion.Validate(); err != nil {
+		t.Fatalf("valid completion rejected: %v", err)
+	}
+
+	failure := RecordRunFailureCommand{
+		RunID:      "run-1",
+		Attempt:    1,
+		ErrorCode:  "rag_execution_failed",
+		Terminal:   true,
+		Event:      testEventDraft("event-failed", EventTypeRunFailed, now),
+		OccurredAt: now,
+	}
+	if err := failure.Validate(); err != nil {
+		t.Fatalf("valid failure command rejected: %v", err)
+	}
+
+	failure.Event.Type = EventTypeRunStatus
+	if err := failure.Validate(); err == nil {
+		t.Fatal("terminal failure accepted retry event")
+	}
+}
+
 func testSubmission(now time.Time) StartRunSubmission {
 	return StartRunSubmission{
 		CustomerID: "customer-1",
@@ -104,5 +161,14 @@ func testSubmission(now time.Time) StartRunSubmission {
 			CreatedAt: now,
 		},
 		JobID: "job-1",
+	}
+}
+
+func testEventDraft(id string, eventType EventType, now time.Time) EventDraft {
+	return EventDraft{
+		ID:        id,
+		Type:      eventType,
+		Payload:   map[string]any{},
+		CreatedAt: now,
 	}
 }

@@ -120,6 +120,8 @@ cmd/worker/main.go
 | `internal/application/chat/doc.go` | Chat Application 包职责说明 |
 | `internal/application/chat/service.go` | 规范化客户消息并编排 Message、Run、Event 和 Job 原子创建 |
 | `internal/application/chat/service_test.go` | 验证提交构造、幂等结果、请求校验和稳定错误映射 |
+| `internal/application/chat/executor.go` | 编排持久化 Agent Run 尝试、RAG Graph、失败分类和终态提交 |
+| `internal/application/chat/executor_test.go` | 验证成功事件、终态重放、重试耗尽和人工接管保护 |
 
 ## Agent Runtime
 
@@ -130,6 +132,7 @@ cmd/worker/main.go
 | `internal/agent/retrieval/retriever_test.go` | 验证 Eino Options、资源绑定、防覆盖和 Document 映射 |
 | `internal/agent/graph/doc.go` | Eino RAG Graph 包说明 |
 | `internal/agent/graph/graph.go` | 编排检索、Answerability Gate、受约束生成、追问和拒答路由 |
+| `internal/agent/graph/factory.go` | 按会话知识库创建资源隔离的 RAG Runtime |
 | `internal/agent/graph/answerability.go` | 按明确阈值生成三类 Answerability 决策 |
 | `internal/agent/graph/evidence.go` | 校验检索排序与来源元数据，并限制进入 Prompt 的上下文 |
 | `internal/agent/graph/prompt.go` | 构造不可信知识数据边界并校验回答来源标记 |
@@ -153,6 +156,8 @@ cmd/worker/main.go
 | `internal/infrastructure/persistence/chat/doc.go` | Chat PostgreSQL Repository 包说明 |
 | `internal/infrastructure/persistence/chat/repository.go` | 使用会话行锁原子创建 Message、Run、首事件和持久化 Job |
 | `internal/infrastructure/persistence/chat/repository_integration_test.go` | 使用真实 PostgreSQL 验证幂等、客户隔离、并发去重和整笔回滚 |
+| `internal/infrastructure/persistence/chat/execution.go` | 原子管理 Run 尝试、Assistant Message、Graph Result、事件和失败终态 |
+| `internal/infrastructure/persistence/chat/execution_integration_test.go` | 使用真实 PostgreSQL 验证完成、重试、终止、重放和人工接管 |
 
 ## Worker
 
@@ -163,11 +168,13 @@ cmd/worker/main.go
 | `internal/infrastructure/jobs/queue.go` | 使用 PostgreSQL 租约原子领取、完成、重试和恢复任务 |
 | `internal/infrastructure/jobs/worker.go` | 管理类型分发、执行超时、有界退避和 Context 生命周期 |
 | `internal/infrastructure/jobs/knowledge_handler.go` | 校验 `knowledge.index` Payload 并适配 Application 索引用例 |
+| `internal/infrastructure/jobs/agent_run_handler.go` | 校验 `agent.run` Payload、幂等键和尝试信息并调用执行用例 |
 | `internal/infrastructure/jobs/worker_test.go` | 验证成功、重试、永久失败、取消收尾和类型过滤 |
 | `internal/infrastructure/jobs/knowledge_handler_test.go` | 验证索引 Payload、幂等键和失败分类映射 |
+| `internal/infrastructure/jobs/agent_run_handler_test.go` | 验证 Run 任务分发、输入拒绝和失败分类映射 |
 | `internal/infrastructure/jobs/queue_integration_test.go` | 使用真实 PostgreSQL 验证并发领取、租约、重试上限和锁恢复 |
 
-Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDING_API_KEY` 时不注册 `knowledge.index` Handler，已有索引任务保持 `pending`。
+Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDING_API_KEY` 时不注册 `knowledge.index` Handler；缺少 `LLM_API_KEY` 或 `EMBEDDING_API_KEY` 时不注册 `agent.run` Handler，已有对应任务保持 `pending`。
 
 ## 通用包
 
@@ -188,6 +195,7 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `migrations/000001_init.sql` | 创建 pgvector 扩展、Job 表、约束和索引 |
 | `migrations/000002_knowledge.sql` | 创建知识库、文档版本、1024 维切片、活动版本约束和 HNSW 索引 |
 | `migrations/000003_chat.sql` | 创建会话、消息、Agent Run、运行事件、状态约束和幂等索引 |
+| `migrations/000004_agent_run_execution.sql` | 关联 Assistant Message 与 Run，并保证每个 Run 只有一个回答 |
 
 已经提交或执行的迁移文件不可直接改写；后续 Schema 变化必须新增版本文件。
 

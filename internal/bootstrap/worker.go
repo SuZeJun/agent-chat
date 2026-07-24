@@ -5,10 +5,15 @@ import (
 	"io"
 	"strings"
 
+	agentgraph "agent-chat/internal/agent/graph"
+	chatapplication "agent-chat/internal/application/chat"
 	"agent-chat/internal/application/knowledgeindex"
-	domain "agent-chat/internal/domain/knowledge"
+	"agent-chat/internal/application/knowledgeretrieve"
+	chatdomain "agent-chat/internal/domain/chat"
+	knowledgedomain "agent-chat/internal/domain/knowledge"
 	"agent-chat/internal/infrastructure/jobs"
 	"agent-chat/internal/infrastructure/model"
+	chatpg "agent-chat/internal/infrastructure/persistence/chat"
 	knowledgepg "agent-chat/internal/infrastructure/persistence/knowledge"
 )
 
@@ -21,13 +26,15 @@ func RunWorker(ctx context.Context, output io.Writer) error {
 	defer runtime.close()
 
 	handlers := make(map[string]jobs.Handler)
+	knowledgeRepository := knowledgepg.NewRepository(runtime.database)
+	var embedder *model.ZhipuEmbedder
 	if strings.TrimSpace(runtime.config.Models.Embedding.APIKey) != "" {
-		embedder, err := model.NewZhipuEmbedder(runtime.config.Models.Embedding)
+		embedder, err = model.NewZhipuEmbedder(runtime.config.Models.Embedding)
 		if err != nil {
 			return err
 		}
 		indexer, err := knowledgeindex.NewIndexer(
-			knowledgepg.NewRepository(runtime.database),
+			knowledgeRepository,
 			embedder,
 			knowledgeindex.NewDeterministicChunker(),
 		)
@@ -38,12 +45,54 @@ func RunWorker(ctx context.Context, output io.Writer) error {
 		if err != nil {
 			return err
 		}
-		handlers[domain.IndexJobType] = handler
+		handlers[knowledgedomain.IndexJobType] = handler
 	} else {
 		runtime.logger.WarnContext(
 			ctx,
 			"knowledge indexing disabled",
 			"reason", "EMBEDDING_API_KEY is not configured",
+		)
+	}
+
+	if embedder != nil && strings.TrimSpace(runtime.config.Models.Chat.APIKey) != "" {
+		chatModel, err := model.NewDeepSeekChatModel(ctx, runtime.config.Models.Chat)
+		if err != nil {
+			return err
+		}
+		retrievalService, err := knowledgeretrieve.NewService(
+			knowledgeRepository,
+			embedder,
+		)
+		if err != nil {
+			return err
+		}
+		graphFactory, err := agentgraph.NewFactory(
+			retrievalService,
+			chatModel,
+			agentgraph.DefaultFactoryConfig(),
+		)
+		if err != nil {
+			return err
+		}
+		executor, err := chatapplication.NewExecutor(
+			chatpg.NewRepository(runtime.database),
+			graphFactory,
+			chatapplication.UUIDGenerator{},
+			chatapplication.SystemClock{},
+		)
+		if err != nil {
+			return err
+		}
+		handler, err := jobs.NewAgentRunHandler(executor)
+		if err != nil {
+			return err
+		}
+		handlers[chatdomain.AgentRunJobType] = handler
+	} else {
+		runtime.logger.WarnContext(
+			ctx,
+			"agent run execution disabled",
+			"reason", "LLM_API_KEY and EMBEDDING_API_KEY are both required",
 		)
 	}
 

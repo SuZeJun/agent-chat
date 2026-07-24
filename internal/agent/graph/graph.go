@@ -125,6 +125,11 @@ func (runtime *Runtime) Invoke(
 	return runtime.runnable.Invoke(ctx, input, options...)
 }
 
+// Run 使用默认 Eino 运行选项执行 Graph，供 Application Runtime Port 调用。
+func (runtime *Runtime) Run(ctx context.Context, input Input) (Output, error) {
+	return runtime.Invoke(ctx, input)
+}
+
 func (deps dependencies) validateInput(
 	_ context.Context,
 	input Input,

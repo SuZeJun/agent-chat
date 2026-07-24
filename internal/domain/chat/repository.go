@@ -8,4 +8,10 @@ type Repository interface {
 	CreateConversation(context.Context, Conversation) error
 	// StartRun 原子创建客户消息、Agent Run、首事件和持久化 Job。
 	StartRun(context.Context, StartRunSubmission) (StartRunResult, error)
+	// BeginRunAttempt 锁定 Run 并记录一次 Worker 执行开始。
+	BeginRunAttempt(context.Context, BeginRunAttempt) (RunSource, error)
+	// CompleteRun 原子保存回答、Graph Result、事件并结束 Run。
+	CompleteRun(context.Context, CompleteRunCommand) error
+	// RecordRunFailure 记录可重试尝试或将 Run 终结为 failed。
+	RecordRunFailure(context.Context, RecordRunFailureCommand) error
 }

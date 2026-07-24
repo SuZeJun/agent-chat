@@ -23,7 +23,7 @@ func TestLoadMigrations(t *testing.T) {
 		t.Fatalf("unexpected migration checksum: %q", items[0].checksum)
 	}
 	last := items[len(items)-1]
-	if last.version != 3 || last.name != "000003_chat.sql" {
+	if last.version != 4 || last.name != "000004_agent_run_execution.sql" {
 		t.Fatalf("unexpected last migration: %#v", last)
 	}
 }

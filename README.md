@@ -15,13 +15,14 @@
 - 基于 `FOR UPDATE SKIP LOCKED` 的持久化 Job 领取、有界重试和锁超时恢复
 - `knowledge.index` Handler 批量生成 embedding、写入切片并单调发布最新版本
 - 服务端绑定知识库、支持 Top-K/阈值/元数据过滤的 Eino Retriever
+- `agent.run` Handler 执行 RAG Graph，并原子保存 Assistant Message、Graph Result 和有序运行事件
 - 带 advisory lock、文件名和 SHA-256 校验的事务迁移
 - `/healthz` 与 `/readyz`
 - 结构化日志、服务端请求 ID、受控 panic 恢复和优雅退出
 - 带状态约束、重试约束和部分索引的 Job 基础表
 - Go 单元测试、PostgreSQL 集成测试和 GitHub Actions
 
-Worker 只领取已注册的 Job 类型，避免新旧版本部署期间误消费尚未支持的任务。配置 `EMBEDDING_API_KEY` 后会注册 `knowledge.index` Handler；开发环境未配置 Key 时 Worker 仍可启动，但索引能力会明确记录为 disabled，任务保持 `pending`。
+Worker 只领取已注册的 Job 类型，避免新旧版本部署期间误消费尚未支持的任务。配置 `EMBEDDING_API_KEY` 后会注册 `knowledge.index` Handler；同时配置 `LLM_API_KEY` 和 `EMBEDDING_API_KEY` 后会注册 `agent.run` Handler。开发环境缺少相应 Key 时 Worker 仍可启动，但对应任务保持 `pending` 并记录 disabled 原因。
 
 ## 本地启动
 
@@ -45,7 +46,7 @@ curl http://127.0.0.1:8080/healthz
 curl http://127.0.0.1:8080/readyz
 ```
 
-默认配置与 Compose 一致。覆盖配置时参考 `.env.example` 设置环境变量；应用不会自动读取 `.env` 文件。模型默认使用关闭 thinking 的 `deepseek-v4-flash` 与 1024 维 `embedding-3`，API Key 不得提交到仓库。API 健康检查不调用模型；开发环境未配置 embedding Key 时 Worker 不注册索引 Handler。`production` 环境必须显式配置 `DATABASE_URL`、`LLM_API_KEY` 和 `EMBEDDING_API_KEY`，模型端点必须使用 HTTPS；数据库 `sslmode` 仅接受 `require`、`verify-ca` 或 `verify-full`，生产部署优先使用 `verify-full`。
+默认配置与 Compose 一致。覆盖配置时参考 `.env.example` 设置环境变量；应用不会自动读取 `.env` 文件。模型默认使用关闭 thinking 的 `deepseek-v4-flash` 与 1024 维 `embedding-3`，API Key 不得提交到仓库。API 健康检查不调用模型；开发环境缺少模型 Key 时 Worker 不注册对应 Handler。`production` 环境必须显式配置 `DATABASE_URL`、`LLM_API_KEY` 和 `EMBEDDING_API_KEY`，模型端点必须使用 HTTPS；数据库 `sslmode` 仅接受 `require`、`verify-ca` 或 `verify-full`，生产部署优先使用 `verify-full`。
 
 Worker 默认单进程串行执行任务。`WORKER_JOB_TIMEOUT` 限制单次执行时间，`WORKER_LOCK_TIMEOUT` 必须更长，用于恢复进程崩溃遗留的租约；重试使用 `WORKER_RETRY_BASE_DELAY` 到 `WORKER_RETRY_MAX_DELAY` 之间的有界指数退避。
 

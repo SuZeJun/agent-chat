@@ -257,6 +257,16 @@ flowchart TD
 
 Worker 负责真正执行 Agent Graph，避免裸 goroutine 在服务重启时丢失任务。
 
+`agent.run` 的单次尝试按以下顺序执行：
+
+1. 锁定 Run 与 Conversation，将 Run 切换为 `running` 并追加 `run.started`。
+2. 使用会话绑定的 Knowledge Base 创建隔离 RAG Runtime，客户端和模型不能覆盖资源范围。
+3. 执行检索、Answerability Gate 和受约束生成。
+4. 在同一事务中保存 Assistant Message、Graph Result、有序事件和 Run 终态。
+5. 可重试失败保持 Run 为 `running` 并等待 Job 重投；不可重试或耗尽次数后原子进入 `failed`。
+
+如果执行期间会话已转为 `human_active`，完成事务拒绝保存 AI 回答，防止客服接管后出现迟到消息。
+
 ### 6.2 Job 状态
 
 ```text
@@ -290,6 +300,7 @@ pending -> running -> succeeded
 
 - 客户消息使用客户端消息 ID 去重。
 - Agent Run 对来源消息建立唯一约束。
+- Assistant Message 对 Agent Run 建立唯一约束，任务重放不会生成重复回答。
 - 同一会话内并发提交由会话行锁串行化；同一客户端消息 ID 只有内容一致时才视为重放。
 - 创建工单使用确认请求 ID 作为幂等键。
 - Resume 使用审批版本或原子状态更新防止重复消费。
@@ -310,6 +321,13 @@ pending -> running -> succeeded
 3. `sequence = 1` 的 `run.status` 事件。
 4. 以 Run ID 为幂等键的 `agent.run` Job。
 5. 会话最后活跃时间。
+
+当前聊天完成事务一次写入：
+
+1. 唯一关联 Run 的 `assistant` 消息。
+2. 包含回答、路由与证据的 Graph Result。
+3. 连续递增的检索、Answerability、消息、引用和终态事件。
+4. Agent Run 的 `completed` 终态和会话最后活跃时间。
 
 会话的 `customer_id` 来自服务端鉴权主体，不接受模型决定；客户资料表和客户创建流程在后续身份接入阶段实现。
 

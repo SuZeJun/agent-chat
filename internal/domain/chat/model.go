@@ -144,6 +144,7 @@ type Message struct {
 	ID              string
 	ConversationID  string
 	ClientMessageID string
+	AgentRunID      string
 	Role            MessageRole
 	Content         string
 	CreatedAt       time.Time
@@ -172,6 +173,14 @@ func (message Message) Validate() error {
 		}
 	} else if clientMessageID != "" {
 		return errors.New("non-customer message must not have a client message ID")
+	}
+	agentRunID := strings.TrimSpace(message.AgentRunID)
+	if message.Role == MessageRoleAssistant {
+		if err := validateID("assistant message agent run ID", agentRunID); err != nil {
+			return err
+		}
+	} else if agentRunID != "" {
+		return errors.New("non-assistant message must not have an agent run ID")
 	}
 	if strings.TrimSpace(message.Content) == "" {
 		return errors.New("message content must not be blank")
@@ -335,6 +344,212 @@ type StartRunResult struct {
 	Message   Message
 	Run       AgentRun
 	Duplicate bool
+}
+
+// RunSource 是 Worker 执行 Graph 所需的持久化快照。
+type RunSource struct {
+	Run             AgentRun
+	Message         Message
+	KnowledgeBaseID string
+	Conversation    ConversationStatus
+}
+
+// Validate 校验 Run、来源消息和会话绑定关系。
+func (source RunSource) Validate() error {
+	if err := source.Run.ValidateSnapshot(); err != nil {
+		return fmt.Errorf("invalid run source run: %w", err)
+	}
+	if err := source.Message.Validate(); err != nil {
+		return fmt.Errorf("invalid run source message: %w", err)
+	}
+	if source.Message.Role != MessageRoleCustomer ||
+		source.Run.ConversationID != source.Message.ConversationID ||
+		source.Run.SourceMessageID != source.Message.ID {
+		return errors.New("run source relationships are inconsistent")
+	}
+	if err := validateID("knowledge base ID", source.KnowledgeBaseID); err != nil {
+		return err
+	}
+	if !source.Conversation.Valid() {
+		return fmt.Errorf("invalid run source conversation status %q", source.Conversation)
+	}
+	return nil
+}
+
+// Terminal 判断 Run 是否已经不可再次执行。
+func (source RunSource) Terminal() bool {
+	return source.Run.Status == RunStatusCompleted || source.Run.Status == RunStatusFailed
+}
+
+// EventDraft 是由 Repository 在 Run 行锁内分配 sequence 的事件草稿。
+type EventDraft struct {
+	ID        string
+	Type      EventType
+	Payload   map[string]any
+	CreatedAt time.Time
+}
+
+// Validate 校验事件草稿，但不要求调用方预先计算 sequence。
+func (event EventDraft) Validate() error {
+	candidate := RunEvent{
+		ID:        event.ID,
+		RunID:     "sequence-assigned-by-repository",
+		Sequence:  1,
+		Type:      event.Type,
+		Payload:   event.Payload,
+		CreatedAt: event.CreatedAt,
+	}
+	return candidate.Validate()
+}
+
+// BeginRunAttempt 是开始一次 Job 尝试的原子状态转换。
+type BeginRunAttempt struct {
+	RunID   string
+	Attempt int
+	Event   EventDraft
+}
+
+// Validate 校验开始事件和尝试次数。
+func (command BeginRunAttempt) Validate() error {
+	if err := validateID("agent run ID", command.RunID); err != nil {
+		return err
+	}
+	if command.Attempt <= 0 {
+		return errors.New("agent run attempt must be greater than zero")
+	}
+	if err := command.Event.Validate(); err != nil {
+		return err
+	}
+	if command.Event.Type != EventTypeRunStarted {
+		return errors.New("begin run attempt event must be run.started")
+	}
+	if !numericPayloadEquals(command.Event.Payload["attempt"], command.Attempt) {
+		return errors.New("begin run attempt event must contain the attempt number")
+	}
+	return nil
+}
+
+// CompleteRunCommand 是成功结果、Assistant Message 和事件的原子提交。
+type CompleteRunCommand struct {
+	RunID       string
+	Message     Message
+	Result      map[string]any
+	Events      []EventDraft
+	CompletedAt time.Time
+}
+
+// Validate 校验成功提交的关联关系和事件顺序。
+func (command CompleteRunCommand) Validate() error {
+	if err := validateID("agent run ID", command.RunID); err != nil {
+		return err
+	}
+	if err := command.Message.Validate(); err != nil {
+		return fmt.Errorf("invalid assistant message: %w", err)
+	}
+	if command.Message.Role != MessageRoleAssistant ||
+		command.Message.AgentRunID != command.RunID {
+		return errors.New("completion message must belong to the agent run")
+	}
+	if command.Result == nil {
+		return errors.New("agent run result must be a JSON object")
+	}
+	encodedResult, err := json.Marshal(command.Result)
+	if err != nil {
+		return errors.New("agent run result must be valid JSON")
+	}
+	if len(encodedResult) > 256<<10 {
+		return errors.New("agent run result exceeds 256 KiB")
+	}
+	if len(command.Events) < 4 {
+		return errors.New("agent run completion events are incomplete")
+	}
+	for _, event := range command.Events {
+		if err := event.Validate(); err != nil {
+			return err
+		}
+	}
+	if command.Events[0].Type != EventTypeRetrievalCompleted ||
+		command.Events[1].Type != EventTypeAnswerabilityDecided ||
+		command.Events[2].Type != EventTypeMessageDelta ||
+		command.Events[len(command.Events)-1].Type != EventTypeRunCompleted {
+		return errors.New("agent run completion event order is invalid")
+	}
+	for _, event := range command.Events[3 : len(command.Events)-1] {
+		if event.Type != EventTypeMessageCitation {
+			return errors.New("only citation events may precede run.completed")
+		}
+	}
+	if command.CompletedAt.IsZero() {
+		return errors.New("agent run completed time is required")
+	}
+	return nil
+}
+
+// RecordRunFailureCommand 记录可重试尝试或终态失败。
+type RecordRunFailureCommand struct {
+	RunID      string
+	Attempt    int
+	ErrorCode  string
+	Terminal   bool
+	Event      EventDraft
+	OccurredAt time.Time
+}
+
+// Validate 校验稳定错误码和 retry/final 事件语义。
+func (command RecordRunFailureCommand) Validate() error {
+	if err := validateID("agent run ID", command.RunID); err != nil {
+		return err
+	}
+	if command.Attempt <= 0 {
+		return errors.New("agent run attempt must be greater than zero")
+	}
+	if !validErrorCode(command.ErrorCode) {
+		return errors.New("agent run error code is invalid")
+	}
+	if err := command.Event.Validate(); err != nil {
+		return err
+	}
+	expectedType := EventTypeRunStatus
+	if command.Terminal {
+		expectedType = EventTypeRunFailed
+	}
+	if command.Event.Type != expectedType {
+		return errors.New("agent run failure event type does not match terminal state")
+	}
+	if command.OccurredAt.IsZero() {
+		return errors.New("agent run failure time is required")
+	}
+	return nil
+}
+
+func numericPayloadEquals(value any, expected int) bool {
+	switch number := value.(type) {
+	case int:
+		return number == expected
+	case int32:
+		return int(number) == expected
+	case int64:
+		return int(number) == expected
+	case float64:
+		return number == float64(expected)
+	default:
+		return false
+	}
+}
+
+func validErrorCode(code string) bool {
+	code = strings.TrimSpace(code)
+	if code == "" || len(code) > 100 {
+		return false
+	}
+	for _, character := range code {
+		if (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') &&
+			character != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func validateID(name string, value string) error {

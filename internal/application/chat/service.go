@@ -85,14 +85,19 @@ func (failure *Failure) CanRetry() bool {
 
 // Service 负责规范化请求并构造原子聊天启动提交。
 type Service struct {
-	repository  domain.Repository
+	repository  MessageRepository
 	idGenerator IDGenerator
 	clock       Clock
 }
 
+// MessageRepository 定义发送消息所需的最小持久化能力。
+type MessageRepository interface {
+	StartRun(context.Context, domain.StartRunSubmission) (domain.StartRunResult, error)
+}
+
 // NewService 创建发送消息 Application Service。
 func NewService(
-	repository domain.Repository,
+	repository MessageRepository,
 	idGenerator IDGenerator,
 	clock Clock,
 ) (*Service, error) {

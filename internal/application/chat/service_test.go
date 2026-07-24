@@ -222,7 +222,7 @@ func TestSendMessageMapsRepositoryFailures(t *testing.T) {
 
 func newTestService(
 	t *testing.T,
-	repository domain.Repository,
+	repository MessageRepository,
 	now time.Time,
 ) *Service {
 	t.Helper()
