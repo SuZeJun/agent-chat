@@ -84,7 +84,7 @@ func TestRuntimeRoutesAllAnswerabilityBranches(t *testing.T) {
 		},
 		{
 			name:          "needs clarification",
-			documents:     []*schema.Document{testDocument("chunk-1", 0.72, 1)},
+			documents:     []*schema.Document{testDocument("chunk-1", 0.6, 1)},
 			decision:      DecisionNeedsClarification,
 			nextAction:    NextActionProvideDetails,
 			lastNode:      nodeAskClarification,

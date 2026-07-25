@@ -12,9 +12,17 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+// 阈值依据智谱 embedding-3 在真实 FAQ 上实测的余弦分布标定，而非先验假设。
+//
+// 实测中「知识足以回答」的最低分为 0.6116，「知识不足」的最高分为 0.5940，
+// 两簇仅相距 0.0177；因此安全边界不放在这条窄缝里，而是取 0.68，与最高的
+// 不可回答分数保持 0.086 的余量：宁可把可回答问题降级为澄清，也不允许在
+// 证据不足时生成结论。0.55 只区分「追问」与「直接拒答」，误判成本较低。
+//
+// 语料或 embedding 模型变化后必须重新测量并同步更新评估集。
 const (
-	defaultAnswerableScoreThreshold    = 0.82
-	defaultClarificationScoreThreshold = 0.65
+	defaultAnswerableScoreThreshold    = 0.68
+	defaultClarificationScoreThreshold = 0.55
 	defaultMaxContextDocuments         = 5
 	defaultMaxContextRunes             = 8000
 )

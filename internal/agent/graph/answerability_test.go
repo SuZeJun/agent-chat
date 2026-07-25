@@ -24,8 +24,9 @@ func TestAnswerabilityEvalCases(t *testing.T) {
 	if err := json.Unmarshal(content, &cases); err != nil {
 		t.Fatalf("decode answerability cases: %v", err)
 	}
-	if len(cases) != 10 {
-		t.Fatalf("expected 10 answerability cases, got %d", len(cases))
+	// 与 Eval 的安全门槛保持一致的下限；语料扩充后用例只增不减。
+	if len(cases) < 10 {
+		t.Fatalf("expected at least 10 answerability cases, got %d", len(cases))
 	}
 
 	for _, test := range cases {

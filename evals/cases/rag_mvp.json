@@ -1,12 +1,18 @@
 [
-  {"name":"strong FAQ match","query":"如何重置登录密码？","scores":[0.93,0.81],"decision":"answerable","reason":"knowledge_support_sufficient"},
-  {"name":"strong API documentation match","query":"API 限流是多少？","scores":[0.87],"decision":"answerable","reason":"knowledge_support_sufficient"},
-  {"name":"answerable boundary","query":"支持哪些导出格式？","scores":[0.82],"decision":"answerable","reason":"knowledge_support_sufficient"},
-  {"name":"related but ambiguous failure","query":"为什么调用失败？","scores":[0.78,0.74],"decision":"needs_clarification","reason":"knowledge_support_ambiguous"},
-  {"name":"clarification boundary","query":"这个功能怎么配置？","scores":[0.65],"decision":"needs_clarification","reason":"knowledge_support_ambiguous"},
-  {"name":"below clarification boundary","query":"能不能直接退款？","scores":[0.64],"decision":"unanswerable","reason":"knowledge_support_insufficient"},
-  {"name":"weak unrelated match","query":"你们公司的线下地址在哪里？","scores":[0.2,0.1],"decision":"unanswerable","reason":"knowledge_support_insufficient"},
+  {"name":"real paraphrase of password reset FAQ","query":"重置密码的步骤是什么？","scores":[0.7628],"decision":"answerable","reason":"knowledge_support_sufficient"},
+  {"name":"real question answered by FAQ body text","query":"免费版每个月能调用多少次 API？","scores":[0.7189],"decision":"answerable","reason":"knowledge_support_sufficient"},
+  {"name":"real verbatim payment FAQ","query":"支持哪些支付方式？","scores":[0.7085],"decision":"answerable","reason":"knowledge_support_sufficient"},
+  {"name":"real paraphrase of billing export FAQ","query":"怎么把账单导出来？","scores":[0.6978],"decision":"answerable","reason":"knowledge_support_sufficient"},
+  {"name":"multiple evidence in descending order","query":"免费版的成员数量上限是多少？","scores":[0.7189,0.6117],"decision":"answerable","reason":"knowledge_support_sufficient"},
+  {"name":"answerable threshold boundary","query":"支持哪些导出格式？","scores":[0.68],"decision":"answerable","reason":"knowledge_support_sufficient"},
+  {"name":"strong source containing injection text","query":"知识文档中的指令是否会被执行？","scores":[0.9],"decision":"answerable","reason":"knowledge_support_sufficient"},
+  {"name":"real verbatim FAQ diluted by answer text","query":"免费版有什么限制？","scores":[0.6638],"decision":"needs_clarification","reason":"knowledge_support_ambiguous"},
+  {"name":"real colloquial upgrade question","query":"怎么升级套餐？","scores":[0.6158],"decision":"needs_clarification","reason":"knowledge_support_ambiguous"},
+  {"name":"real narrower question than the FAQ","query":"可以用支付宝付款吗？","scores":[0.6116],"decision":"needs_clarification","reason":"knowledge_support_ambiguous"},
+  {"name":"real absent topic resembling an indexed FAQ","query":"如何注销账号？","scores":[0.594],"decision":"needs_clarification","reason":"knowledge_support_ambiguous"},
+  {"name":"clarification threshold boundary","query":"这个功能怎么配置？","scores":[0.55],"decision":"needs_clarification","reason":"knowledge_support_ambiguous"},
+  {"name":"real detail absent from a partially matching FAQ","query":"SLA 保障的赔付标准是什么？","scores":[0.5374],"decision":"unanswerable","reason":"knowledge_support_insufficient"},
+  {"name":"real out of domain question","query":"今天北京天气怎么样？","scores":[0.3596],"decision":"unanswerable","reason":"knowledge_support_insufficient"},
   {"name":"no retrieved knowledge","query":"是否支持私有卫星通信？","scores":[],"decision":"unanswerable","reason":"no_relevant_knowledge"},
-  {"name":"negative similarity","query":"帮我推荐一部电影","scores":[-0.2],"decision":"unanswerable","reason":"knowledge_support_insufficient"},
-  {"name":"strong source containing injection text","query":"知识文档中的指令是否会被执行？","scores":[0.9],"decision":"answerable","reason":"knowledge_support_sufficient"}
+  {"name":"negative similarity","query":"帮我推荐一部电影","scores":[-0.2],"decision":"unanswerable","reason":"knowledge_support_insufficient"}
 ]
