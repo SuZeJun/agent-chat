@@ -18,7 +18,7 @@
 - `agent.run` Handler 执行 RAG Graph，并原子保存 Assistant Message、Graph Result 和有序运行事件
 - FAQ CSV 内容幂等导入、逐行索引状态查询和客户隔离的聊天/SSE API
 - Eino Callback 节点、模型耗时和 Token Trace
-- 10 条实际执行 Eino Graph 的 pytest 离线安全评估
+- 16 条实际执行 Eino Graph 的 pytest 离线安全评估，分数取自真实检索实测
 - 带 advisory lock、文件名和 SHA-256 校验的事务迁移
 - `/healthz` 与 `/readyz`
 - 结构化日志、服务端请求 ID、受控 panic 恢复和优雅退出
