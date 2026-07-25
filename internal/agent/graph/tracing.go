@@ -3,13 +3,22 @@ package graph
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components"
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
+)
+
+// Trace 字段上限与 Domain RunStepDraft 的持久化契约保持一致，
+// 保证 Graph 产出的 Trace 永远不会在 Run 提交阶段才被拒绝。
+const (
+	maxTraceNameBytes          = 100
+	maxTraceComponentTypeBytes = 255
 )
 
 // traceStartKey 用于在 Eino Callback Context 中关联同一次调用的开始时间。
@@ -81,9 +90,9 @@ func (collector *traceCollector) finish(
 	}
 	completedAt := time.Now().UTC()
 	step := TraceStep{
-		Name:           info.Name,
+		Name:           traceStepName(info),
 		Component:      string(info.Component),
-		ComponentType:  info.Type,
+		ComponentType:  truncateTraceField(info.Type, maxTraceComponentTypeBytes),
 		Status:         status,
 		StartedAt:      start.startedAt,
 		CompletedAt:    completedAt,
@@ -110,6 +119,29 @@ func (collector *traceCollector) snapshot() []TraceStep {
 		return steps[left].StartedAt.Before(steps[right].StartedAt)
 	})
 	return steps
+}
+
+// traceStepName 返回稳定且非空的步骤名称。
+//
+// Eino 只为 Graph 节点填充 RunInfo.Name；在 Lambda 内部直接调用的组件（例如
+// ChatModel）拿到的是空名称，而持久化契约要求名称非空，因此回退到组件身份。
+func traceStepName(info *callbacks.RunInfo) string {
+	if name := strings.TrimSpace(info.Name); name != "" {
+		return truncateTraceField(name, maxTraceNameBytes)
+	}
+	return truncateTraceField(strings.TrimSpace(string(info.Component)), maxTraceNameBytes)
+}
+
+// truncateTraceField 按字节上限截断并保持 UTF-8 完整，避免超长身份导致提交失败。
+func truncateTraceField(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	truncated := value[:limit]
+	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated
 }
 
 // traceableRunInfo 只允许 Graph Lambda 和 ChatModel 进入持久化 Trace。

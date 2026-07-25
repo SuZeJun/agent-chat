@@ -24,6 +24,8 @@ var (
 	ErrInvalidState = errors.New("invalid chat state")
 	// ErrIdempotencyConflict 表示同一客户端消息 ID 被用于不同内容。
 	ErrIdempotencyConflict = errors.New("chat idempotency conflict")
+	// ErrInvalidCommand 表示命令自身不满足领域契约；重试不会改变结果。
+	ErrInvalidCommand = errors.New("invalid chat command")
 )
 
 // ConversationStatus 表示会话由 AI 或人工接待的状态。

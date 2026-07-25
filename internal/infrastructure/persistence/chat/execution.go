@@ -17,7 +17,11 @@ func (repository *Repository) BeginRunAttempt(
 	command domain.BeginRunAttempt,
 ) (domain.RunSource, error) {
 	if err := command.Validate(); err != nil {
-		return domain.RunSource{}, fmt.Errorf("begin agent run attempt: %w", err)
+		return domain.RunSource{}, fmt.Errorf(
+			"begin agent run attempt: %w: %w",
+			domain.ErrInvalidCommand,
+			err,
+		)
 	}
 
 	transaction, err := repository.database.BeginTx(ctx, pgx.TxOptions{})
@@ -88,7 +92,7 @@ func (repository *Repository) CompleteRun(
 	command domain.CompleteRunCommand,
 ) error {
 	if err := command.Validate(); err != nil {
-		return fmt.Errorf("complete agent run: %w", err)
+		return fmt.Errorf("complete agent run: %w: %w", domain.ErrInvalidCommand, err)
 	}
 	result, err := json.Marshal(command.Result)
 	if err != nil {
@@ -196,7 +200,11 @@ func (repository *Repository) RecordRunFailure(
 	command domain.RecordRunFailureCommand,
 ) error {
 	if err := command.Validate(); err != nil {
-		return fmt.Errorf("record agent run failure: %w", err)
+		return fmt.Errorf(
+			"record agent run failure: %w: %w",
+			domain.ErrInvalidCommand,
+			err,
+		)
 	}
 
 	transaction, err := repository.database.BeginTx(ctx, pgx.TxOptions{})

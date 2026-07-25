@@ -184,7 +184,24 @@ func (executor *Executor) ExecuteRun(
 				err,
 			)
 		}
-		return newFailure("complete_agent_run_failed", true, err)
+		// 命令不满足领域契约属于确定性缺陷，重试只会重复失败并推迟 Run 终态。
+		if errors.Is(err, domain.ErrInvalidCommand) {
+			return executor.failAttempt(
+				ctx,
+				request,
+				"invalid_agent_run_completion",
+				false,
+				err,
+			)
+		}
+		// 必须经由 failAttempt 收敛 Run，否则 Job 耗尽重试后 Run 会永远停在 running。
+		return executor.failAttempt(
+			ctx,
+			request,
+			"complete_agent_run_failed",
+			true,
+			err,
+		)
 	}
 	return nil
 }

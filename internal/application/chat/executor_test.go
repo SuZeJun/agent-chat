@@ -267,6 +267,83 @@ func TestExecuteRunRejectsCompletionAfterConversationTakeover(t *testing.T) {
 	}
 }
 
+// TestExecuteRunConvergesRunWhenCompletionFails 保证提交失败也会写入失败状态。
+//
+// 提交阶段一旦直接返回错误而不记录失败，Job 耗尽重试后 Run 会永远停在 running，
+// SSE 客户端也就永远等不到终态事件。
+func TestExecuteRunConvergesRunWhenCompletionFails(t *testing.T) {
+	tests := []struct {
+		name        string
+		completeErr error
+		attempt     int
+		code        string
+		retryable   bool
+		terminal    bool
+		eventType   domain.EventType
+	}{
+		{
+			name:        "invalid command is permanent and terminal",
+			completeErr: domain.ErrInvalidCommand,
+			attempt:     1,
+			code:        "invalid_agent_run_completion",
+			retryable:   false,
+			terminal:    true,
+			eventType:   domain.EventTypeRunFailed,
+		},
+		{
+			name:        "transient database failure keeps retrying",
+			completeErr: errors.New("database operation failed"),
+			attempt:     1,
+			code:        "complete_agent_run_failed",
+			retryable:   true,
+			terminal:    false,
+			eventType:   domain.EventTypeRunStatus,
+		},
+		{
+			name:        "transient failure terminates on the last attempt",
+			completeErr: errors.New("database operation failed"),
+			attempt:     5,
+			code:        "complete_agent_run_failed",
+			retryable:   true,
+			terminal:    true,
+			eventType:   domain.EventTypeRunFailed,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			repository := &fakeRunRepository{
+				source:      testRunSource(domain.RunStatusRunning, now),
+				completeErr: test.completeErr,
+			}
+			executor := newTestExecutor(
+				t,
+				repository,
+				&fakeRuntimeFactory{runner: &fakeGraphRunner{output: testGraphOutput()}},
+				now,
+			)
+
+			err := executor.ExecuteRun(context.Background(), ExecuteRunRequest{
+				RunID:       "run-1",
+				Attempt:     test.attempt,
+				MaxAttempts: 5,
+			})
+			var failure *Failure
+			if !errors.As(err, &failure) ||
+				failure.Code != test.code ||
+				failure.RetryAllowed != test.retryable {
+				t.Fatalf("unexpected failure: %v", err)
+			}
+			if repository.failureCommand.Terminal != test.terminal ||
+				repository.failureCommand.Event.Type != test.eventType ||
+				repository.failureCommand.ErrorCode != test.code {
+				t.Fatalf("Run was not converged: %#v", repository.failureCommand)
+			}
+		})
+	}
+}
+
 func testRunSource(status domain.RunStatus, now time.Time) domain.RunSource {
 	return domain.RunSource{
 		Run: domain.AgentRun{
