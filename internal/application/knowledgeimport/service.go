@@ -145,7 +145,7 @@ func (service *Service) ImportFAQs(
 	if request.KnowledgeBaseID == "" || len(request.KnowledgeBaseID) > 64 {
 		return ImportResult{}, newFailure("invalid_knowledge_base_id", false, nil)
 	}
-	if request.SourceName == "" || len(request.SourceName) > 255 {
+	if !validImportSourceName(request.SourceName) {
 		return ImportResult{}, newFailure("invalid_import_source_name", false, nil)
 	}
 
@@ -237,6 +237,19 @@ func (service *Service) GetStatus(
 		}
 	}
 	return snapshot, nil
+}
+
+// validImportSourceName 校验归一化后的来源文件名。
+//
+// path.Base 在输入为空时返回 "."，输入为 "/" 时原样返回 "/"，这些都是路径占位
+// 结果而非文件名；若不显式排除，空文件名会以 "." 的形式持久化到导入记录和每条
+// 文档的 metadata 上。
+func validImportSourceName(name string) bool {
+	switch name {
+	case "", ".", "..", "/":
+		return false
+	}
+	return len(name) <= 255
 }
 
 // faqRow 是经过表头映射但尚未完成业务校验的一行 CSV。

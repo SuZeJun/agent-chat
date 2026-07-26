@@ -104,6 +104,45 @@ func TestImportFAQsBuildsAtomicSubmission(t *testing.T) {
 	}
 }
 
+// TestImportFAQsRejectsPathPlaceholderSourceNames 覆盖 path.Base 的占位返回值。
+//
+// 客户端可以按 RFC 7578 上传空 filename；归一化后必须仍被判为非法，否则来源名
+// 会以 "." 之类的占位值写入导入记录和文档 metadata。
+func TestImportFAQsRejectsPathPlaceholderSourceNames(t *testing.T) {
+	tests := []struct {
+		name       string
+		sourceName string
+	}{
+		{name: "empty filename", sourceName: ""},
+		{name: "whitespace only filename", sourceName: "   "},
+		{name: "current directory", sourceName: "."},
+		{name: "parent directory", sourceName: ".."},
+		{name: "root path", sourceName: "/"},
+		{name: "trailing separator only", sourceName: `\`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &fakeRepository{}
+			service := newTestService(t, repository, time.Now())
+
+			_, err := service.ImportFAQs(context.Background(), ImportRequest{
+				KnowledgeBaseID: "base-1",
+				SourceName:      test.sourceName,
+				Content:         []byte("question,answer\n如何重置密码？,请在设置页重置。"),
+			})
+			var failure *Failure
+			if !errors.As(err, &failure) ||
+				failure.Code != "invalid_import_source_name" {
+				t.Fatalf("expected invalid_import_source_name, got %v", err)
+			}
+			if repository.created.SourceName != "" {
+				t.Fatalf("rejected import reached the repository: %#v", repository.created)
+			}
+		})
+	}
+}
+
 func TestImportFAQsCanonicalChecksumIgnoresBOMAndNewlines(t *testing.T) {
 	firstRepository := &fakeRepository{}
 	secondRepository := &fakeRepository{}
