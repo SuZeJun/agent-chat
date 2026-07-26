@@ -98,6 +98,9 @@ func newDeepSeekChatModel(
 	if cfg.Thinking {
 		thinkingType = "enabled"
 	}
+	// Eino 在 HTTPClient 非空时忽略自身的 Timeout 字段，实际生效的是下方
+	// sanitizedModelHTTPClient 设置的 http.Client.Timeout；此处保留 Timeout
+	// 只为表达配置意图，修改超时语义必须改动 sanitizedModelHTTPClient。
 	chatModel, err := einoopenai.NewChatModel(ctx, &einoopenai.ChatModelConfig{
 		APIKey:     cfg.APIKey,
 		BaseURL:    strings.TrimRight(cfg.BaseURL, "/"),
@@ -201,6 +204,13 @@ func modelProviderStatusCode(err error) int {
 }
 
 // sanitizedModelHTTPClient 在 Eino SDK 和 Callback 解析响应前移除供应商错误正文。
+//
+// http.Client.Timeout 覆盖响应体读取全程，对当前使用的 Generate 是正确的整请求
+// 上限，但它同时会成为 Stream 的总时长上限：超过该时长的流式回答会被中途切断。
+// 目前没有任何调用方使用 Stream，因此该限制尚未生效。接入流式回答时不能简单删除
+// 此处的 Timeout（Eino 会忽略 ChatModelConfig.Timeout，删除等于让 LLM_TIMEOUT
+// 完全失效），而应区分两条路径：Generate 保留整请求上限，Stream 改用
+// Transport 层的连接与首字节超时。
 func sanitizedModelHTTPClient(timeout time.Duration, source *http.Client) *http.Client {
 	client := &http.Client{Timeout: timeout}
 	if source != nil {
