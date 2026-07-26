@@ -179,23 +179,39 @@ func TestKnowledgeRetrieverDeepCopiesRequiredMetadata(t *testing.T) {
 	}
 }
 
+// TestKnowledgeRetrieverPropagatesSafeApplicationFailure 同时校验重试性可见性。
+//
+// RAG Graph 通过错误链上的 CanRetry 判定是否允许重试；只要该方法在链路上不可见，
+// 可重试的检索失败就会被静默判成永久失败，Job 队列的有界重试永远不会生效。
 func TestKnowledgeRetrieverPropagatesSafeApplicationFailure(t *testing.T) {
-	service := &fakeService{
-		err: &knowledgeretrieve.Failure{
-			Code:         "query_embedding_failed",
-			RetryAllowed: true,
-		},
-	}
-	retriever := newTestRetriever(t, service, Config{
-		KnowledgeBaseID:       "base-1",
-		DefaultTopK:           5,
-		DefaultScoreThreshold: 0.6,
-	})
+	for _, retryable := range []bool{false, true} {
+		name := map[bool]string{false: "permanent", true: "retryable"}[retryable]
+		t.Run(name, func(t *testing.T) {
+			service := &fakeService{
+				err: &knowledgeretrieve.Failure{
+					Code:         "query_embedding_failed",
+					RetryAllowed: retryable,
+				},
+			}
+			retriever := newTestRetriever(t, service, Config{
+				KnowledgeBaseID:       "base-1",
+				DefaultTopK:           5,
+				DefaultScoreThreshold: 0.6,
+			})
 
-	_, err := retriever.Retrieve(context.Background(), "问题")
-	var failure *knowledgeretrieve.Failure
-	if !errors.As(err, &failure) || failure.Code != "query_embedding_failed" {
-		t.Fatalf("unexpected error: %v", err)
+			_, err := retriever.Retrieve(context.Background(), "问题")
+			var failure *knowledgeretrieve.Failure
+			if !errors.As(err, &failure) || failure.Code != "query_embedding_failed" {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var retryability interface{ CanRetry() bool }
+			if !errors.As(err, &retryability) {
+				t.Fatal("retrieval failure does not expose CanRetry to the Graph")
+			}
+			if retryability.CanRetry() != retryable {
+				t.Fatalf("expected CanRetry %t, got %t", retryable, retryability.CanRetry())
+			}
+		})
 	}
 }
 

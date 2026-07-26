@@ -315,6 +315,15 @@ func assertFailure(
 	if failure.Code != expectedCode || failure.RetryAllowed != expectedRetryable {
 		t.Fatalf("unexpected failure: %#v", failure)
 	}
+	// 调用方通过错误链上的 CanRetry 读取重试性，而非直接访问字段；只断言字段
+	// 无法发现该方法缺失，可重试失败会被静默降级为永久失败。
+	var retryability interface{ CanRetry() bool }
+	if !errors.As(err, &retryability) {
+		t.Fatal("retrieval failure does not expose CanRetry to callers")
+	}
+	if retryability.CanRetry() != expectedRetryable {
+		t.Fatalf("CanRetry disagrees with RetryAllowed: %#v", failure)
+	}
 }
 
 func validRequest() Request {

@@ -50,6 +50,14 @@ func (failure *Failure) Unwrap() error {
 	return failure.cause
 }
 
+// CanRetry 返回调用方是否可以安全重试本次检索操作。
+//
+// RAG Graph 通过错误链上的该方法判定重试性；缺少此方法时可重试的检索失败会被
+// 静默降级为永久失败，Job 队列的有界重试也就永远不会生效。
+func (failure *Failure) CanRetry() bool {
+	return failure.RetryAllowed
+}
+
 // Service 负责问题向量化、向量空间校验和活动切片检索。
 type Service struct {
 	repository Repository
