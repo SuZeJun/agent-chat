@@ -1,7 +1,7 @@
 GO ?= go
 COMPOSE ?= docker compose
 
-.PHONY: deps deps-down api worker dev test test-integration vet check build compose-check
+.PHONY: deps deps-down api worker dev test test-integration vet eval check build compose-check
 
 deps:
 	$(COMPOSE) up -d --wait postgres
@@ -27,7 +27,10 @@ test-integration: deps
 vet:
 	$(GO) vet ./...
 
-check: test vet compose-check
+eval:
+	python -m pytest evals/runner
+
+check: test vet eval compose-check
 
 build:
 	mkdir -p bin

@@ -1,0 +1,24 @@
+[
+  {
+    "name": "faq_locale_match",
+    "query": "如何重置密码？",
+    "metadata": {
+      "locale": "zh-CN"
+    },
+    "topK": 5,
+    "minimumSimilarity": 0.7,
+    "expectedDocumentIDs": [
+      "document-password-reset"
+    ]
+  },
+  {
+    "name": "metadata_filter_excludes_other_locale",
+    "query": "如何重置密码？",
+    "metadata": {
+      "locale": "en-US"
+    },
+    "topK": 5,
+    "minimumSimilarity": 0.7,
+    "expectedDocumentIDs": []
+  }
+]

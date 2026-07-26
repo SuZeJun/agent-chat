@@ -22,6 +22,10 @@ func TestLoadMigrations(t *testing.T) {
 	if len(items[0].checksum) != 64 {
 		t.Fatalf("unexpected migration checksum: %q", items[0].checksum)
 	}
+	last := items[len(items)-1]
+	if last.version != 6 || last.name != "000006_agent_run_trace.sql" {
+		t.Fatalf("unexpected last migration: %#v", last)
+	}
 }
 
 func TestParseMigrationRejectsInvalidName(t *testing.T) {

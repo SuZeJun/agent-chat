@@ -29,6 +29,20 @@
 - 工具权限
 - 数据库事务
 
+FAQ/Markdown 切片 Eval Case 位于 `internal/application/knowledgeindex/testdata/chunking_cases.json`，
+由 `chunker_test.go` 直接读取。切片规则变化必须同步更新用例和预期结果，避免无意改变检索语义。
+
+检索 Eval Case 位于 `internal/application/knowledgeretrieve/testdata/retrieval_cases.json`，
+固定问题、Top-K、阈值、元数据过滤和期望来源；由 `service_test.go` 验证 Application 检索契约。
+
+Answerability Eval Case 位于 `internal/agent/graph/testdata/answerability_cases.json`，
+固定问题、最强证据分数、三类路由结果和稳定原因；由 `answerability_test.go` 验证阈值边界。
+Graph 测试同时验证非回答分支不调用模型、引用只来自回答显式标注的合法来源，以及检索内容始终作为不可信 JSON 数据进入 Prompt。
+
+RAG MVP 发布门槛位于 `evals/cases/rag_mvp.json`。pytest 会启动 `cmd/rag-eval`，
+对全部 Case 真正执行 Eino Graph，并验证三类决策、稳定原因、非回答分支不调用模型，
+以及回答分支只能返回实际来源 `S1`。Runner 同时生成机器可读 JSON 和 Markdown 报告。
+
 ### 2.2 离线数据集
 
 固定输入、期望行为和知识来源，运行真实检索与模型。
@@ -235,23 +249,22 @@ Judge 输出必须是结构化 JSON，并保留模型和 Prompt 版本。
 
 ## 11. 运行方式
 
-目标命令：
+当前可用命令：
 
 ```bash
 make eval
-make eval CASE=kb_api_rate_limit_001
-make eval CATEGORY=unanswerable
-make eval-report
+python -m pytest evals/runner
+go run ./cmd/rag-eval
 ```
 
 评估输出：
 
 ```text
-evals/reports/<run-id>/results.json
-evals/reports/<run-id>/summary.md
+evals/reports/latest.json
+evals/reports/latest.md
 ```
 
-CI 默认运行不调用付费模型的确定性评估；需要真实模型的完整评估由手动工作流或受控环境执行。
+CI 默认运行不调用付费 Provider、但会实际执行 Eino Graph 的确定性评估；需要真实模型的完整评估由后续手动工作流或受控环境执行。
 
 ## 12. 反馈闭环
 

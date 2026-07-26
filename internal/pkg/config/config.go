@@ -12,18 +12,30 @@ import (
 const (
 	defaultHTTPAddress          = ":8080"
 	defaultDatabaseURL          = "postgres://agent_chat:agent_chat_password@127.0.0.1:5433/agent_chat?sslmode=disable"
+	defaultLLMBaseURL           = "https://api.deepseek.com"
+	defaultLLMModel             = "deepseek-v4-flash"
+	defaultEmbeddingBaseURL     = "https://open.bigmodel.cn/api/paas/v4"
+	defaultEmbeddingModel       = "embedding-3"
+	defaultEmbeddingDimensions  = 1024
 	defaultShutdownTimeout      = 10 * time.Second
 	defaultDatabasePingTimeout  = 2 * time.Second
 	defaultMigrationTimeout     = 30 * time.Second
 	defaultWorkerPollInterval   = 2 * time.Second
+	defaultWorkerJobTimeout     = 2 * time.Minute
+	defaultWorkerLockTimeout    = 5 * time.Minute
+	defaultWorkerRetryBaseDelay = 2 * time.Second
+	defaultWorkerRetryMaxDelay  = time.Minute
+	defaultLLMTimeout           = 60 * time.Second
+	defaultEmbeddingTimeout     = 30 * time.Second
 	defaultDatabaseMaxOpenConns = int32(10)
 	defaultDatabaseMinOpenConns = int32(1)
 )
 
-// Config 汇总 API、数据库和 Worker 的运行配置。
+// Config 汇总 API、数据库、模型和 Worker 的运行配置。
 type Config struct {
 	App      App
 	Database Database
+	Models   Models
 	Worker   Worker
 }
 
@@ -44,9 +56,38 @@ type Database struct {
 	MigrationTimeout time.Duration
 }
 
-// Worker 定义后台任务轮询配置。
+// Models 汇总生成模型与 embedding 模型配置。
+type Models struct {
+	Chat      ChatModel
+	Embedding EmbeddingModel
+}
+
+// ChatModel 定义 DeepSeek ChatModel 的连接和推理参数。
+type ChatModel struct {
+	APIKey   string
+	BaseURL  string
+	Model    string
+	Thinking bool
+	Timeout  time.Duration
+}
+
+// EmbeddingModel 定义智谱 Embedding 的连接和向量维度。
+type EmbeddingModel struct {
+	APIKey     string
+	BaseURL    string
+	Model      string
+	Dimensions int
+	Timeout    time.Duration
+}
+
+// Worker 定义后台任务轮询、执行租约和重试配置。
 type Worker struct {
-	PollInterval time.Duration
+	ID             string
+	PollInterval   time.Duration
+	JobTimeout     time.Duration
+	LockTimeout    time.Duration
+	RetryBaseDelay time.Duration
+	RetryMaxDelay  time.Duration
 }
 
 type lookupFunc func(string) (string, bool)
@@ -58,6 +99,12 @@ func Load() (Config, error) {
 
 func load(lookup lookupFunc) (Config, error) {
 	environment := strings.ToLower(valueOrDefault(lookup, "APP_ENV", "development"))
+	switch environment {
+	case "development", "test", "production":
+	default:
+		return Config{}, fmt.Errorf("APP_ENV must be one of development, test, or production")
+	}
+
 	databaseURL, databaseURLSet := explicitValue(lookup, "DATABASE_URL")
 	if !databaseURLSet {
 		switch environment {
@@ -82,8 +129,29 @@ func load(lookup lookupFunc) (Config, error) {
 			PingTimeout:      defaultDatabasePingTimeout,
 			MigrationTimeout: defaultMigrationTimeout,
 		},
+		Models: Models{
+			Chat: ChatModel{
+				APIKey:   valueOrDefault(lookup, "LLM_API_KEY", ""),
+				BaseURL:  valueOrDefault(lookup, "LLM_BASE_URL", defaultLLMBaseURL),
+				Model:    valueOrDefault(lookup, "LLM_MODEL", defaultLLMModel),
+				Thinking: false,
+				Timeout:  defaultLLMTimeout,
+			},
+			Embedding: EmbeddingModel{
+				APIKey:     valueOrDefault(lookup, "EMBEDDING_API_KEY", ""),
+				BaseURL:    valueOrDefault(lookup, "EMBEDDING_BASE_URL", defaultEmbeddingBaseURL),
+				Model:      valueOrDefault(lookup, "EMBEDDING_MODEL", defaultEmbeddingModel),
+				Dimensions: defaultEmbeddingDimensions,
+				Timeout:    defaultEmbeddingTimeout,
+			},
+		},
 		Worker: Worker{
-			PollInterval: defaultWorkerPollInterval,
+			ID:             valueOrDefault(lookup, "WORKER_ID", ""),
+			PollInterval:   defaultWorkerPollInterval,
+			JobTimeout:     defaultWorkerJobTimeout,
+			LockTimeout:    defaultWorkerLockTimeout,
+			RetryBaseDelay: defaultWorkerRetryBaseDelay,
+			RetryMaxDelay:  defaultWorkerRetryMaxDelay,
 		},
 	}
 
@@ -100,10 +168,34 @@ func load(lookup lookupFunc) (Config, error) {
 	if cfg.Worker.PollInterval, err = durationValue(lookup, "WORKER_POLL_INTERVAL", cfg.Worker.PollInterval); err != nil {
 		return Config{}, err
 	}
+	if cfg.Worker.JobTimeout, err = durationValue(lookup, "WORKER_JOB_TIMEOUT", cfg.Worker.JobTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.Worker.LockTimeout, err = durationValue(lookup, "WORKER_LOCK_TIMEOUT", cfg.Worker.LockTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.Worker.RetryBaseDelay, err = durationValue(lookup, "WORKER_RETRY_BASE_DELAY", cfg.Worker.RetryBaseDelay); err != nil {
+		return Config{}, err
+	}
+	if cfg.Worker.RetryMaxDelay, err = durationValue(lookup, "WORKER_RETRY_MAX_DELAY", cfg.Worker.RetryMaxDelay); err != nil {
+		return Config{}, err
+	}
+	if cfg.Models.Chat.Timeout, err = durationValue(lookup, "LLM_TIMEOUT", cfg.Models.Chat.Timeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.Models.Embedding.Timeout, err = durationValue(lookup, "EMBEDDING_TIMEOUT", cfg.Models.Embedding.Timeout); err != nil {
+		return Config{}, err
+	}
 	if cfg.Database.MaxOpenConns, err = int32Value(lookup, "DATABASE_MAX_OPEN_CONNS", cfg.Database.MaxOpenConns); err != nil {
 		return Config{}, err
 	}
 	if cfg.Database.MinOpenConns, err = int32Value(lookup, "DATABASE_MIN_OPEN_CONNS", cfg.Database.MinOpenConns); err != nil {
+		return Config{}, err
+	}
+	if cfg.Models.Embedding.Dimensions, err = intValue(lookup, "EMBEDDING_DIM", cfg.Models.Embedding.Dimensions); err != nil {
+		return Config{}, err
+	}
+	if cfg.Models.Chat.Thinking, err = boolValue(lookup, "LLM_THINKING", cfg.Models.Chat.Thinking); err != nil {
 		return Config{}, err
 	}
 
@@ -131,6 +223,12 @@ func (cfg Config) validate() error {
 		default:
 			return fmt.Errorf("DATABASE_URL must use sslmode=require, verify-ca, or verify-full in production")
 		}
+		if strings.TrimSpace(cfg.Models.Chat.APIKey) == "" {
+			return fmt.Errorf("LLM_API_KEY must be explicitly set in production")
+		}
+		if strings.TrimSpace(cfg.Models.Embedding.APIKey) == "" {
+			return fmt.Errorf("EMBEDDING_API_KEY must be explicitly set in production")
+		}
 	}
 	switch cfg.App.LogLevel {
 	case "debug", "info", "warn", "error":
@@ -155,8 +253,63 @@ func (cfg Config) validate() error {
 	if cfg.Database.MinOpenConns > cfg.Database.MaxOpenConns {
 		return fmt.Errorf("DATABASE_MIN_OPEN_CONNS must not exceed DATABASE_MAX_OPEN_CONNS")
 	}
+	if err := validateEndpoint("LLM_BASE_URL", cfg.Models.Chat.BaseURL, cfg.App.Environment); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.Models.Chat.Model) == "" {
+		return fmt.Errorf("LLM_MODEL must not be empty")
+	}
+	switch cfg.Models.Chat.Model {
+	case "deepseek-v4-flash", "deepseek-v4-pro":
+	default:
+		return fmt.Errorf("LLM_MODEL must be deepseek-v4-flash or deepseek-v4-pro")
+	}
+	if cfg.Models.Chat.Timeout <= 0 {
+		return fmt.Errorf("LLM_TIMEOUT must be greater than zero")
+	}
+	if err := validateEndpoint("EMBEDDING_BASE_URL", cfg.Models.Embedding.BaseURL, cfg.App.Environment); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.Models.Embedding.Model) == "" {
+		return fmt.Errorf("EMBEDDING_MODEL must not be empty")
+	}
+	if cfg.Models.Embedding.Model != defaultEmbeddingModel {
+		return fmt.Errorf("EMBEDDING_MODEL must be embedding-3")
+	}
+	if cfg.Models.Embedding.Dimensions != defaultEmbeddingDimensions {
+		return fmt.Errorf("EMBEDDING_DIM must be 1024")
+	}
+	if cfg.Models.Embedding.Timeout <= 0 {
+		return fmt.Errorf("EMBEDDING_TIMEOUT must be greater than zero")
+	}
 	if cfg.Worker.PollInterval <= 0 {
 		return fmt.Errorf("WORKER_POLL_INTERVAL must be greater than zero")
+	}
+	if len(cfg.Worker.ID) > 100 {
+		return fmt.Errorf("WORKER_ID must not exceed 100 characters")
+	}
+	if cfg.Worker.JobTimeout <= 0 {
+		return fmt.Errorf("WORKER_JOB_TIMEOUT must be greater than zero")
+	}
+	if cfg.Worker.LockTimeout <= cfg.Worker.JobTimeout {
+		return fmt.Errorf("WORKER_LOCK_TIMEOUT must be greater than WORKER_JOB_TIMEOUT")
+	}
+	if cfg.Worker.RetryBaseDelay <= 0 {
+		return fmt.Errorf("WORKER_RETRY_BASE_DELAY must be greater than zero")
+	}
+	if cfg.Worker.RetryMaxDelay < cfg.Worker.RetryBaseDelay {
+		return fmt.Errorf("WORKER_RETRY_MAX_DELAY must not be less than WORKER_RETRY_BASE_DELAY")
+	}
+	return nil
+}
+
+func validateEndpoint(key string, rawURL string, environment string) error {
+	endpoint, err := url.Parse(rawURL)
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+		return fmt.Errorf("%s must be a valid HTTP(S) URL", key)
+	}
+	if environment == "production" && endpoint.Scheme != "https" {
+		return fmt.Errorf("%s must use HTTPS in production", key)
 	}
 	return nil
 }
@@ -197,4 +350,28 @@ func int32Value(lookup lookupFunc, key string, fallback int32) (int32, error) {
 		return 0, fmt.Errorf("%s must be a valid integer: %w", key, err)
 	}
 	return int32(value), nil
+}
+
+func intValue(lookup lookupFunc, key string, fallback int) (int, error) {
+	raw, ok := lookup(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid integer: %w", key, err)
+	}
+	return value, nil
+}
+
+func boolValue(lookup lookupFunc, key string, fallback bool) (bool, error) {
+	raw, ok := lookup(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return false, fmt.Errorf("%s must be a valid boolean: %w", key, err)
+	}
+	return value, nil
 }

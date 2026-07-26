@@ -163,6 +163,54 @@ Agent Runtime 不拥有：
 - `Interrupt/Resume`：实现用户确认。
 - `Callbacks`：收集节点、模型、工具和错误 Trace。
 
+首版模型 Provider 固定为：
+
+- `deepseek-v4-flash` 非思考模式负责 RAG 回答，复杂模型路由需在 Eval 证明收益后再引入。
+- 智谱 `embedding-3` 生成 1024 维向量，索引与查询必须使用相同模型和维度。
+- 每个索引版本必须持久化 `provider + model + dimensions`，查询前必须与当前 Embedder 身份完整匹配。
+- Provider 配置位于通用 Config，Eino 和供应商协议实现仅位于 Infrastructure/Agent 边界。
+- API Key 仅通过环境变量注入，不进入日志、Trace、错误正文或持久化配置。
+
+知识版本发布使用逻辑文档的 `active_version_id`：
+
+- 新版本创建和 `knowledge.index` Job 写入处于同一事务。
+- 切片替换和版本变为 `ready` 处于同一事务。
+- 只有属于当前文档且状态为 `ready` 的版本可以成为活动版本。
+- 新版本发布前，旧活动版本继续参与检索；发布后检索只连接新的活动版本。
+- 发布在数据库事务中比较版本号，乱序完成的旧索引不得覆盖较新的活动版本。
+- 检索事务先校验所有活动版本的 Embedding 身份，再执行 pgvector 查询，避免同维度不同模型静默混用。
+
+首版切片规则保持确定性并纳入版本化 Eval：
+
+- FAQ 将标题作为问题、版本内容作为答案，优先保持为单个原子切片。
+- Markdown 先按空行拆分结构块，再在 1200 rune 上限内打包。
+- 超长结构块使用 120 rune 重叠窗口，避免边界事实完全断开。
+- Worker 按 64 条一批调用 embedding Provider，切片 ID 由版本和位置稳定生成。
+
+基础 RAG Graph 使用确定性 Answerability Gate：
+
+- 最强证据分数达到 `0.68` 才进入受知识约束的模型生成。
+- 分数位于 `0.55` 到 `0.68` 之间时返回 `needs_clarification`，不调用模型。
+- 低于 `0.55` 或没有证据时返回 `unanswerable`，不调用模型并提供转人工动作。
+- 检索内容以不可信 JSON 数据进入 Prompt，内容中的指令不得改变系统策略。
+- 模型回答必须携带合法来源标记；服务端只返回回答显式标注且能映射到检索上下文的引用。
+- 阈值依据智谱 `embedding-3` 在真实 FAQ 上的余弦分布标定，不是先验假设；实测
+  可回答与不可回答两簇仅相距 `0.0177`，因此安全边界与最高的不可回答分数保持
+  `0.086` 余量，宁可降级为澄清也不在证据不足时生成结论。
+- 当前标定仅基于 5 条 FAQ 和 10 个查询，置信度有限；语料或 embedding 模型变化后
+  必须重新测量，并同步 Answerability Eval Case 与宏平均 F1。
+
+Eino Retriever 边界：
+
+- 构造时绑定服务端授权后的知识库 ID，调用级 `Index` 只能省略或传入同值。
+- 禁止调用级覆盖 Embedder，查询和索引始终使用同一 `provider + model + dimensions`。
+- `TopK` 限制为 1-100，相似度阈值必须是 -1 到 1 之间的有限值。
+- `DSLInfo` 只接受 `metadata` JSON 包含过滤，不接收 SQL 或任意表达式。
+- 服务端必需过滤条件不可被调用级参数覆盖，且在构造时深拷贝。
+- Eino `Document` 保存 chunk、document、version、类型、标题、分数和排序，供后续引用与 Trace 使用。
+- Eino Callback 已记录实际执行的 Lambda 节点与 ChatModel，保存状态、耗时和 Token；不保存完整 Prompt、API Key 或供应商错误正文。
+- 检索证据、Answerability 决策和最终引用继续通过有序 Run Event 持久化，管理员 Run 详情将二者组合展示。
+
 ### 5.2 首版不采用
 
 - 多 Agent 自主协作
@@ -173,6 +221,9 @@ Agent Runtime 不拥有：
 - 处于实验阶段且会增加迁移成本的 API
 
 ### 5.3 Agent Graph
+
+当前代码先实现知识问答子图，即 `Retrieve -> Answerability Gate -> Generate / Clarify / Refuse`。
+意图识别、工具调用、审批和转人工节点按后续阶段接入，不为了展示框架提前放入空节点。
 
 ```mermaid
 flowchart TD
@@ -211,6 +262,16 @@ flowchart TD
 
 Worker 负责真正执行 Agent Graph，避免裸 goroutine 在服务重启时丢失任务。
 
+`agent.run` 的单次尝试按以下顺序执行：
+
+1. 锁定 Run 与 Conversation，将 Run 切换为 `running` 并追加 `run.started`。
+2. 使用会话绑定的 Knowledge Base 创建隔离 RAG Runtime，客户端和模型不能覆盖资源范围。
+3. 执行检索、Answerability Gate 和受约束生成。
+4. 在同一事务中保存 Assistant Message、Graph Result、有序事件和 Run 终态。
+5. 可重试失败保持 Run 为 `running` 并等待 Job 重投；不可重试或耗尽次数后原子进入 `failed`。
+
+如果执行期间会话已转为 `human_active`，完成事务拒绝保存 AI 回答，防止客服接管后出现迟到消息。
+
 ### 6.2 Job 状态
 
 ```text
@@ -230,10 +291,22 @@ pending -> running -> succeeded
 - 锁定时间与 Worker
 - 最后错误
 
+执行与恢复约束：
+
+- Worker 只领取和恢复当前进程已注册的任务类型，未支持的类型保持原状态。
+- 领取使用 `FOR UPDATE SKIP LOCKED`，状态、尝试次数和租约在同一 SQL 中原子更新。
+- 只有租约持有者可以提交成功或失败，防止锁恢复后的旧 Worker 覆盖新结果。
+- 可重试错误使用有上限的指数退避；不可重试错误或耗尽次数后进入 `failed`。
+- Handler 原始错误不得进入日志或数据库，只保存稳定错误码。
+- 单次执行超时必须小于锁超时；进程异常退出后，其他 Worker 将过期任务恢复为 `retry_wait` 或 `failed`。
+- Handler 必须保证副作用幂等，因为业务操作成功后、任务状态提交前崩溃会造成再次投递。
+
 ### 6.3 幂等
 
 - 客户消息使用客户端消息 ID 去重。
 - Agent Run 对来源消息建立唯一约束。
+- Assistant Message 对 Agent Run 建立唯一约束，任务重放不会生成重复回答。
+- 同一会话内并发提交由会话行锁串行化；同一客户端消息 ID 只有内容一致时才视为重放。
 - 创建工单使用确认请求 ID 作为幂等键。
 - Resume 使用审批版本或原子状态更新防止重复消费。
 
@@ -245,6 +318,23 @@ pending -> running -> succeeded
 - 审批确认和 Resume Job 创建。
 - 转人工事件、会话状态更新和通知任务创建。
 - 文档版本创建和索引任务创建。
+
+当前聊天启动事务一次写入：
+
+1. `customer` 消息。
+2. 唯一关联来源消息的 `pending` Agent Run。
+3. `sequence = 1` 的 `run.status` 事件。
+4. 以 Run ID 为幂等键的 `agent.run` Job。
+5. 会话最后活跃时间。
+
+当前聊天完成事务一次写入：
+
+1. 唯一关联 Run 的 `assistant` 消息。
+2. 包含回答、路由与证据的 Graph Result。
+3. 连续递增的检索、Answerability、消息、引用和终态事件。
+4. Agent Run 的 `completed` 终态和会话最后活跃时间。
+
+会话的 `customer_id` 来自服务端鉴权主体，不接受模型决定；客户资料表和客户创建流程在后续身份接入阶段实现。
 
 ## 7. 数据模型
 
@@ -271,6 +361,7 @@ pending -> running -> succeeded
 - `agent_configs`
 - `agent_config_versions`
 - `agent_runs`
+- `run_events`
 - `agent_run_steps`
 - `retrieval_traces`
 - `tool_calls`

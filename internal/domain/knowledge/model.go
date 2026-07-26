@@ -1,0 +1,511 @@
+package knowledge
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+)
+
+const (
+	maxIDLength    = 64
+	maxNameLength  = 255
+	maxTitleLength = 500
+	maxImportRows  = 1000
+)
+
+// ErrNotFound 表示目标知识实体不存在。
+var ErrNotFound = errors.New("knowledge entity not found")
+
+// ErrConflict 表示知识实体违反唯一性或幂等约束。
+var ErrConflict = errors.New("knowledge entity conflict")
+
+// ErrInvalidState 表示知识版本状态不允许当前操作。
+var ErrInvalidState = errors.New("invalid knowledge state")
+
+// ErrEmbeddingIdentityMismatch 表示索引与当前 Embedder 不属于同一向量空间。
+var ErrEmbeddingIdentityMismatch = errors.New("embedding identity mismatch")
+
+// ErrVersionSuperseded 表示目标版本早于当前活动版本，不得回退发布。
+var ErrVersionSuperseded = errors.New("knowledge version superseded")
+
+// BaseStatus 表示知识库是否参与在线检索。
+type BaseStatus string
+
+const (
+	// BaseStatusActive 表示知识库可被检索。
+	BaseStatusActive BaseStatus = "active"
+	// BaseStatusDisabled 表示知识库暂停参与检索。
+	BaseStatusDisabled BaseStatus = "disabled"
+)
+
+// DocumentType 表示知识来源类型。
+type DocumentType string
+
+const (
+	// DocumentTypeFAQ 表示结构化 FAQ。
+	DocumentTypeFAQ DocumentType = "faq"
+	// DocumentTypeMarkdown 表示 Markdown 文档。
+	DocumentTypeMarkdown DocumentType = "markdown"
+)
+
+// IndexStatus 表示不可变文档版本的索引生命周期。
+type IndexStatus string
+
+const (
+	// IndexStatusPending 表示版本等待索引。
+	IndexStatusPending IndexStatus = "pending"
+	// IndexStatusIndexing 表示版本正在生成切片和向量。
+	IndexStatusIndexing IndexStatus = "indexing"
+	// IndexStatusReady 表示版本已完成索引，可以发布。
+	IndexStatusReady IndexStatus = "ready"
+	// IndexStatusFailed 表示版本索引失败，等待重试或人工处理。
+	IndexStatusFailed IndexStatus = "failed"
+)
+
+// IndexJobType 是持久化知识索引任务的稳定类型。
+const IndexJobType = "knowledge.index"
+
+// FAQImport 表示一次经过规范化和内容去重的 FAQ CSV 导入。
+type FAQImport struct {
+	ID              string
+	KnowledgeBaseID string
+	SourceName      string
+	ContentSHA256   string
+	Items           []FAQImportItem
+	CreatedAt       time.Time
+}
+
+// FAQImportItem 表示导入中一行 FAQ 对应的文档、首版本和索引任务。
+type FAQImportItem struct {
+	RowNumber int
+	Document  Document
+	Version   Version
+	JobID     string
+}
+
+// Validate 校验整个 CSV 导入可以在一个事务中安全创建。
+func (knowledgeImport FAQImport) Validate() error {
+	if err := validateID("FAQ import ID", knowledgeImport.ID); err != nil {
+		return err
+	}
+	if err := validateID("knowledge base ID", knowledgeImport.KnowledgeBaseID); err != nil {
+		return err
+	}
+	sourceName := strings.TrimSpace(knowledgeImport.SourceName)
+	if sourceName == "" || len(sourceName) > maxNameLength {
+		return fmt.Errorf("FAQ import source name must be 1-%d characters", maxNameLength)
+	}
+	if !validChecksum(knowledgeImport.ContentSHA256) {
+		return errors.New("FAQ import checksum is invalid")
+	}
+	if len(knowledgeImport.Items) == 0 || len(knowledgeImport.Items) > maxImportRows {
+		return fmt.Errorf("FAQ import must contain 1-%d rows", maxImportRows)
+	}
+	if knowledgeImport.CreatedAt.IsZero() {
+		return errors.New("FAQ import created time is required")
+	}
+	for index, item := range knowledgeImport.Items {
+		if item.RowNumber != index+2 {
+			return errors.New("FAQ import row numbers must follow the CSV header")
+		}
+		if err := item.Document.Validate(); err != nil {
+			return fmt.Errorf("invalid FAQ import document: %w", err)
+		}
+		if item.Document.KnowledgeBaseID != knowledgeImport.KnowledgeBaseID ||
+			item.Document.Type != DocumentTypeFAQ {
+			return errors.New("FAQ import document scope is inconsistent")
+		}
+		if err := item.Version.Validate(); err != nil {
+			return fmt.Errorf("invalid FAQ import version: %w", err)
+		}
+		if item.Version.DocumentID != item.Document.ID || item.Version.Number != 1 {
+			return errors.New("FAQ import version must be the document first version")
+		}
+		if err := validateID("FAQ import job ID", item.JobID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// FAQImportItemStatus 是管理员可见的一行索引状态。
+type FAQImportItemStatus struct {
+	RowNumber  int
+	DocumentID string
+	VersionID  string
+	Status     IndexStatus
+	ErrorCode  string
+}
+
+// FAQImportSnapshot 汇总一次导入及所有行的当前索引状态。
+type FAQImportSnapshot struct {
+	ID              string
+	KnowledgeBaseID string
+	SourceName      string
+	ContentSHA256   string
+	Status          IndexStatus
+	TotalRows       int
+	ReadyRows       int
+	FailedRows      int
+	Items           []FAQImportItemStatus
+	CreatedAt       time.Time
+}
+
+// CreateFAQImportResult 返回新建或内容幂等重放对应的导入。
+type CreateFAQImportResult struct {
+	Snapshot  FAQImportSnapshot
+	Duplicate bool
+}
+
+// EmbeddingIdentity 唯一标识一个向量空间。
+type EmbeddingIdentity struct {
+	// Provider 是 embedding 服务供应商。
+	Provider string
+	// Model 是 embedding 模型名称。
+	Model string
+	// Dimensions 是向量维度。
+	Dimensions int
+}
+
+// Validate 校验 embedding 身份可被当前 pgvector Schema 支持。
+func (identity EmbeddingIdentity) Validate() error {
+	if strings.TrimSpace(identity.Provider) == "" {
+		return fmt.Errorf("embedding provider must not be blank")
+	}
+	if strings.TrimSpace(identity.Model) == "" {
+		return fmt.Errorf("embedding model must not be blank")
+	}
+	if identity.Dimensions != 1024 {
+		return fmt.Errorf("embedding dimensions must be 1024")
+	}
+	return nil
+}
+
+// Equal 判断两个身份是否属于完全相同的向量空间。
+func (identity EmbeddingIdentity) Equal(other EmbeddingIdentity) bool {
+	return identity.Provider == other.Provider &&
+		identity.Model == other.Model &&
+		identity.Dimensions == other.Dimensions
+}
+
+// Base 表示知识库。
+type Base struct {
+	// ID 是调用方生成的稳定标识。
+	ID string
+	// Name 是管理员可见名称。
+	Name string
+	// Description 是知识库用途说明。
+	Description string
+	// Status 决定知识库是否参与检索。
+	Status BaseStatus
+}
+
+// Validate 校验知识库字段。
+func (base Base) Validate() error {
+	if err := validateID("knowledge base ID", base.ID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(base.Name) == "" || len(base.Name) > maxNameLength {
+		return fmt.Errorf("knowledge base name must be 1-%d characters", maxNameLength)
+	}
+	switch base.Status {
+	case BaseStatusActive, BaseStatusDisabled:
+	default:
+		return fmt.Errorf("invalid knowledge base status %q", base.Status)
+	}
+	return nil
+}
+
+// Document 表示 FAQ 或 Markdown 的逻辑文档。
+type Document struct {
+	// ID 是调用方生成的稳定标识。
+	ID string
+	// KnowledgeBaseID 是所属知识库。
+	KnowledgeBaseID string
+	// Type 是 FAQ 或 Markdown。
+	Type DocumentType
+	// Title 是来源标题；FAQ 可使用问题作为标题。
+	Title string
+	// Metadata 是可用于过滤的业务元数据。
+	Metadata map[string]any
+}
+
+// Validate 校验逻辑文档字段。
+func (document Document) Validate() error {
+	if err := validateID("document ID", document.ID); err != nil {
+		return err
+	}
+	if err := validateID("knowledge base ID", document.KnowledgeBaseID); err != nil {
+		return err
+	}
+	switch document.Type {
+	case DocumentTypeFAQ, DocumentTypeMarkdown:
+	default:
+		return fmt.Errorf("invalid document type %q", document.Type)
+	}
+	if strings.TrimSpace(document.Title) == "" || len(document.Title) > maxTitleLength {
+		return fmt.Errorf("document title must be 1-%d characters", maxTitleLength)
+	}
+	return nil
+}
+
+// Version 表示文档的一次不可变内容快照。
+type Version struct {
+	// ID 是版本稳定标识。
+	ID string
+	// DocumentID 是所属逻辑文档。
+	DocumentID string
+	// Number 是同一文档内单调递增的版本号。
+	Number int
+	// Content 是待切片的规范化源内容。
+	Content string
+	// ContentSHA256 用于检测内容意外变化。
+	ContentSHA256 string
+	// EmbeddingIdentity 是该版本索引使用的向量空间。
+	EmbeddingIdentity EmbeddingIdentity
+}
+
+// IndexSource 汇总 Worker 构建索引所需的逻辑文档、不可变版本和当前状态。
+type IndexSource struct {
+	Document Document
+	Version  Version
+	Status   IndexStatus
+	Active   bool
+}
+
+// Validate 校验索引源聚合的一致性。
+func (source IndexSource) Validate() error {
+	if err := source.Document.Validate(); err != nil {
+		return fmt.Errorf("invalid index source document: %w", err)
+	}
+	if err := source.Version.Validate(); err != nil {
+		return fmt.Errorf("invalid index source version: %w", err)
+	}
+	if source.Version.DocumentID != source.Document.ID {
+		return fmt.Errorf("index source version does not belong to document")
+	}
+	switch source.Status {
+	case IndexStatusPending, IndexStatusIndexing, IndexStatusReady, IndexStatusFailed:
+	default:
+		return fmt.Errorf("invalid index status %q", source.Status)
+	}
+	if source.Active && source.Status != IndexStatusReady {
+		return fmt.Errorf("active index source must be ready")
+	}
+	return nil
+}
+
+// Validate 校验不可变版本及内容校验和。
+func (version Version) Validate() error {
+	if err := validateID("version ID", version.ID); err != nil {
+		return err
+	}
+	if err := validateID("document ID", version.DocumentID); err != nil {
+		return err
+	}
+	if version.Number <= 0 {
+		return fmt.Errorf("version number must be greater than zero")
+	}
+	if strings.TrimSpace(version.Content) == "" {
+		return fmt.Errorf("version content must not be blank")
+	}
+	if version.ContentSHA256 != ContentChecksum(version.Content) {
+		return fmt.Errorf("version content checksum does not match content")
+	}
+	return version.EmbeddingIdentity.Validate()
+}
+
+// ContentChecksum 返回内容的十六进制 SHA-256。
+func ContentChecksum(content string) string {
+	checksum := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("%x", checksum)
+}
+
+func validChecksum(checksum string) bool {
+	if len(checksum) != sha256.Size*2 {
+		return false
+	}
+	for _, character := range checksum {
+		if (character < '0' || character > '9') &&
+			(character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// Chunk 表示一个可检索知识切片。
+type Chunk struct {
+	// ID 是切片稳定标识。
+	ID string
+	// VersionID 是所属不可变版本。
+	VersionID string
+	// Position 是切片在版本内的零基顺序。
+	Position int
+	// Content 是进入检索上下文的原始文本。
+	Content string
+	// TokenCount 是切片估算 Token 数。
+	TokenCount int
+	// Metadata 是用于检索过滤的切片元数据。
+	Metadata map[string]any
+	// Embedding 是与版本身份一致的向量。
+	Embedding []float64
+}
+
+// Validate 校验切片内容、顺序和向量。
+func (chunk Chunk) Validate(identity EmbeddingIdentity) error {
+	if err := validateID("chunk ID", chunk.ID); err != nil {
+		return err
+	}
+	if err := validateID("version ID", chunk.VersionID); err != nil {
+		return err
+	}
+	if chunk.Position < 0 {
+		return fmt.Errorf("chunk position must not be negative")
+	}
+	if strings.TrimSpace(chunk.Content) == "" {
+		return fmt.Errorf("chunk content must not be blank")
+	}
+	if chunk.TokenCount < 0 {
+		return fmt.Errorf("chunk token count must not be negative")
+	}
+	if err := validateVector("chunk embedding", chunk.Embedding, identity.Dimensions); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SearchQuery 定义活动知识版本检索参数。
+type SearchQuery struct {
+	// KnowledgeBaseID 限定单个知识库。
+	KnowledgeBaseID string
+	// EmbeddingIdentity 必须与所有活动版本完全一致。
+	EmbeddingIdentity EmbeddingIdentity
+	// Embedding 是用户问题向量。
+	Embedding []float64
+	// Metadata 是 JSON 包含匹配过滤条件。
+	Metadata map[string]any
+	// Limit 是最大返回数量。
+	Limit int
+	// MinimumSimilarity 是最小 cosine similarity。
+	MinimumSimilarity float64
+}
+
+// Validate 校验检索参数。
+func (query SearchQuery) Validate() error {
+	if err := validateID("knowledge base ID", query.KnowledgeBaseID); err != nil {
+		return err
+	}
+	if err := query.EmbeddingIdentity.Validate(); err != nil {
+		return err
+	}
+	if err := validateVector(
+		"query embedding",
+		query.Embedding,
+		query.EmbeddingIdentity.Dimensions,
+	); err != nil {
+		return err
+	}
+	if query.Limit <= 0 || query.Limit > 100 {
+		return fmt.Errorf("search limit must be between 1 and 100")
+	}
+	if query.MinimumSimilarity < -1 || query.MinimumSimilarity > 1 ||
+		math.IsNaN(query.MinimumSimilarity) ||
+		math.IsInf(query.MinimumSimilarity, 0) {
+		return fmt.Errorf("minimum similarity must be a finite value between -1 and 1")
+	}
+	return nil
+}
+
+// SearchResult 表示一个活动版本切片命中。
+type SearchResult struct {
+	// ChunkID 是命中切片。
+	ChunkID string
+	// DocumentID 是引用来源文档。
+	DocumentID string
+	// VersionID 是命中版本。
+	VersionID string
+	// DocumentType 是 FAQ 或 Markdown。
+	DocumentType DocumentType
+	// Title 是引用展示标题。
+	Title string
+	// Content 是切片原文。
+	Content string
+	// Metadata 是切片元数据。
+	Metadata map[string]any
+	// Similarity 是 cosine similarity。
+	Similarity float64
+	// Rank 是从一开始的返回顺序。
+	Rank int
+}
+
+// Validate 校验 Retriever 向上层返回的来源、分数和排序信息。
+func (result SearchResult) Validate() error {
+	if err := validateID("chunk ID", result.ChunkID); err != nil {
+		return err
+	}
+	if err := validateID("document ID", result.DocumentID); err != nil {
+		return err
+	}
+	if err := validateID("version ID", result.VersionID); err != nil {
+		return err
+	}
+	switch result.DocumentType {
+	case DocumentTypeFAQ, DocumentTypeMarkdown:
+	default:
+		return fmt.Errorf("invalid document type %q", result.DocumentType)
+	}
+	if strings.TrimSpace(result.Title) == "" || len(result.Title) > maxTitleLength {
+		return fmt.Errorf("result title must be 1-%d characters", maxTitleLength)
+	}
+	if strings.TrimSpace(result.Content) == "" {
+		return fmt.Errorf("result content must not be blank")
+	}
+	if result.Similarity < -1 || result.Similarity > 1 ||
+		math.IsNaN(result.Similarity) ||
+		math.IsInf(result.Similarity, 0) {
+		return fmt.Errorf("result similarity must be a finite value between -1 and 1")
+	}
+	if result.Rank <= 0 {
+		return fmt.Errorf("result rank must be greater than zero")
+	}
+	if _, err := json.Marshal(result.Metadata); err != nil {
+		return fmt.Errorf("result metadata must be valid JSON")
+	}
+	return nil
+}
+
+func validateID(name string, value string) error {
+	if strings.TrimSpace(value) == "" || len(value) > maxIDLength {
+		return fmt.Errorf("%s must be 1-%d characters", name, maxIDLength)
+	}
+	return nil
+}
+
+func validateVector(name string, vector []float64, dimensions int) error {
+	if len(vector) != dimensions {
+		return fmt.Errorf(
+			"%s dimensions mismatch: expected %d, got %d",
+			name,
+			dimensions,
+			len(vector),
+		)
+	}
+	hasNonZeroValue := false
+	for _, value := range vector {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return fmt.Errorf("%s must contain only finite values", name)
+		}
+		if value != 0 {
+			hasNonZeroValue = true
+		}
+	}
+	if !hasNonZeroValue {
+		return fmt.Errorf("%s must not be a zero vector", name)
+	}
+	return nil
+}

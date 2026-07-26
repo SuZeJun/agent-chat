@@ -1,0 +1,20 @@
+[
+  {
+    "name": "faq_keeps_question_and_answer_together",
+    "documentType": "faq",
+    "title": "如何重置密码？",
+    "content": "请在登录页点击“忘记密码”，然后按邮件提示完成重置。",
+    "expectedChunks": [
+      "问题：如何重置密码？\n答案：请在登录页点击“忘记密码”，然后按邮件提示完成重置。"
+    ]
+  },
+  {
+    "name": "markdown_packs_structural_blocks",
+    "documentType": "markdown",
+    "title": "API 限流",
+    "content": "# API 限流\r\n\r\n基础版每分钟最多调用 60 次。\r\n\r\n## 超限处理\r\n\r\n收到 429 后请指数退避。",
+    "expectedChunks": [
+      "# API 限流\n\n基础版每分钟最多调用 60 次。\n\n## 超限处理\n\n收到 429 后请指数退避。"
+    ]
+  }
+]
