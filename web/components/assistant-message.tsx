@@ -1,8 +1,26 @@
 import { AlertTriangle, Info, Loader2 } from "lucide-react";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { CitationList } from "@/components/citation-list";
 import type { AssistantState, RunStage } from "@/lib/types";
+
+/**
+ * 运行详情入口。
+ *
+ * 这是演示便利而非产品特性：客户不应看到内部 Trace。链接独立于消息内容渲染，
+ * 移除时只需删除本组件的调用点。
+ */
+function TraceLink({ runId }: { runId: string }) {
+  return (
+    <Link
+      href={`/admin/runs/${encodeURIComponent(runId)}`}
+      className="mt-2 inline-block text-xs text-muted-foreground underline underline-offset-4"
+    >
+      查看运行详情（内部视图）
+    </Link>
+  );
+}
 
 const STAGE_LABEL: Record<RunStage, string> = {
   pending: "正在排队…",
@@ -75,6 +93,7 @@ export function AssistantMessage({ state }: { state: AssistantState }) {
         <p className="mt-1 font-mono text-xs text-muted-foreground">
           {state.errorCode}
         </p>
+        <TraceLink runId={state.runId} />
       </div>
     );
   }
@@ -91,14 +110,18 @@ export function AssistantMessage({ state }: { state: AssistantState }) {
     return (
       <div className="max-w-[85%]">
         <DecisionNotice state={state} />
+        <TraceLink runId={state.runId} />
       </div>
     );
   }
 
   return (
-    <div className="max-w-[85%] rounded-lg border border-border bg-card p-3">
-      <p className="text-sm whitespace-pre-wrap">{state.answer}</p>
-      <CitationList citations={state.citations} />
+    <div className="max-w-[85%]">
+      <div className="rounded-lg border border-border bg-card p-3">
+        <p className="text-sm whitespace-pre-wrap">{state.answer}</p>
+        <CitationList citations={state.citations} />
+      </div>
+      <TraceLink runId={state.runId} />
     </div>
   );
 }

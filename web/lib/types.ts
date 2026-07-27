@@ -56,6 +56,48 @@ export type ApiErrorBody = {
   requestId: string;
 };
 
+/** 管理员可见的 Run 执行步骤。 */
+export type RunTraceStep = {
+  order: number;
+  name: string;
+  component: string;
+  componentType: string;
+  status: string;
+  durationMillis: number;
+  promptTokens: number;
+  completionTokens: number;
+  startedAt: string;
+  completedAt: string;
+};
+
+/** Run 结果快照，字段与 Graph Output 的持久化形式一致。 */
+export type RunResult = {
+  answer?: string;
+  nextAction?: NextAction;
+  nodePath?: string[];
+  citations?: Citation[];
+  assessment?: {
+    decision?: Decision;
+    reason?: string;
+    confidence?: number;
+    evidence?: Evidence[];
+  };
+};
+
+export type RunTrace = {
+  runId: string;
+  requestId: string;
+  conversationId: string;
+  question: string;
+  status: string;
+  errorCode?: string;
+  result: RunResult;
+  steps: RunTraceStep[];
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
 /** Run 在前端的可见阶段，用于展示处理进度。 */
 export type RunStage =
   | "pending"

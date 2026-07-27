@@ -22,21 +22,25 @@ func (repository *Repository) LoadRunTrace(
 	var rawResult []byte
 	err := repository.database.QueryRow(ctx, `
 		SELECT
-			id,
-			request_id,
-			conversation_id,
-			status,
-			result,
-			error_code,
-			created_at,
-			started_at,
-			completed_at
-		FROM agent_runs
-		WHERE id = $1
+			run.id,
+			run.request_id,
+			run.conversation_id,
+			source.content,
+			run.status,
+			run.result,
+			run.error_code,
+			run.created_at,
+			run.started_at,
+			run.completed_at
+		FROM agent_runs AS run
+		JOIN messages AS source
+		  ON source.id = run.source_message_id
+		WHERE run.id = $1
 	`, runID).Scan(
 		&trace.RunID,
 		&trace.RequestID,
 		&trace.ConversationID,
+		&trace.Question,
 		&trace.Status,
 		&rawResult,
 		&trace.ErrorCode,

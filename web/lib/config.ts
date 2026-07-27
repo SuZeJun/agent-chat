@@ -9,6 +9,7 @@
 export type ServerConfig = {
   apiBaseUrl: string;
   customerId: string;
+  adminId: string;
   knowledgeBaseId: string;
   knowledgeBaseName: string;
 };
@@ -28,6 +29,9 @@ export function readServerConfig(): ServerConfig {
       "",
     ),
     customerId: process.env.DEMO_CUSTOMER_ID?.trim() || "demo-customer",
+    // Run 详情面向管理员与 AI 运营人员，与客户身份分开，避免内部 Trace
+    // 经由客户作用域的路由泄露。
+    adminId: process.env.DEMO_ADMIN_ID?.trim() || "demo-admin",
     // 当前后端没有「列出知识库」接口，因此知识库由配置绑定而非页面选择。
     knowledgeBaseId: requireEnv("KNOWLEDGE_BASE_ID"),
     knowledgeBaseName: process.env.KNOWLEDGE_BASE_NAME?.trim() || "演示知识库",
