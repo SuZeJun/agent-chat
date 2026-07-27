@@ -43,6 +43,22 @@ RAG MVP 发布门槛位于 `evals/cases/rag_mvp.json`。pytest 会启动 `cmd/ra
 对全部 Case 真正执行 Eino Graph，并验证三类决策、稳定原因、非回答分支不调用模型，
 以及回答分支只能返回实际来源 `S1`。Runner 同时生成机器可读 JSON 和 Markdown 报告。
 
+Answerability 阈值不是先验假设，而是依据真实 embedding 的余弦分布标定的。
+`evals/tools/embed_probe.py` 对同一批 FAQ 测量三种文档侧表示（仅问题、问答全文、
+仅答案）下可回答与不可回答两簇的分离度，语料位于 `evals/tools/probe_corpus.json`。
+
+该工具会调用付费 Provider，因此不在 `evals/runner` 下，也不会被 pytest 采集，
+CI 永远不执行它。以下情况必须重新测量并复核阈值：
+
+- 知识库语料规模或领域发生明显变化
+- 更换 embedding Provider 或模型
+- 三分支判定被反馈为过于激进或过于保守
+
+判读方式：分离度为可回答查询的最低分减去不可回答查询的最高分。分离度为负说明
+该表示方式下两簇重叠，无论阈值取值都必然误判，此时应考虑 rerank 或多证据聚合，
+而不是继续调整阈值。安全边界必须与不可回答的最高分保留余量，不能贴着两簇之间的
+窄缝取值，否则换一批问题即失效。
+
 ### 2.2 离线数据集
 
 固定输入、期望行为和知识来源，运行真实检索与模型。
@@ -255,6 +271,12 @@ Judge 输出必须是结构化 JSON，并保留模型和 Prompt 版本。
 make eval
 python -m pytest evals/runner
 go run ./cmd/rag-eval
+```
+
+阈值标定测量（手动执行，调用付费 Provider）：
+
+```bash
+python evals/tools/embed_probe.py
 ```
 
 评估输出：

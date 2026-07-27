@@ -1,0 +1,37 @@
+{
+  "description": "Answerability 阈值标定语料。faqs 需与知识库中的 FAQ 保持一致；queries 的 answerable 表示该问题能否由 faqs 中的答案真正回答。",
+  "faqs": [
+    {
+      "question": "如何重置密码？",
+      "answer": "登录后进入设置页面，选择安全设置，点击重置密码，按邮件提示完成。"
+    },
+    {
+      "question": "如何导出账单？",
+      "answer": "在账单页面选择时间范围，点击导出 CSV，文件会发送到注册邮箱。"
+    },
+    {
+      "question": "免费版有什么限制？",
+      "answer": "免费版每月 1000 次 API 调用，最多 3 个成员，不包含 SLA 保障。"
+    },
+    {
+      "question": "如何升级到专业版？",
+      "answer": "在订阅页面点击升级，选择专业版并完成支付，权益立即生效。"
+    },
+    {
+      "question": "支持哪些支付方式？",
+      "answer": "支持信用卡、支付宝和对公转账，对公转账需要 3 个工作日到账。"
+    }
+  ],
+  "queries": [
+    {"query": "免费版有什么限制？", "answerable": true, "note": "逐字命中"},
+    {"query": "重置密码的步骤是什么？", "answerable": true, "note": "问题改写"},
+    {"query": "支持哪些支付方式？", "answerable": true, "note": "逐字命中"},
+    {"query": "免费版每个月能调用多少次 API？", "answerable": true, "note": "命中答案正文"},
+    {"query": "怎么把账单导出来？", "answerable": true, "note": "口语化改写"},
+    {"query": "可以用支付宝付款吗？", "answerable": true, "note": "比 FAQ 更窄"},
+    {"query": "怎么升级套餐？", "answerable": true, "note": "术语不同"},
+    {"query": "SLA 保障的赔付标准是什么？", "answerable": false, "note": "FAQ 提到 SLA 但无赔付信息"},
+    {"query": "如何注销账号？", "answerable": false, "note": "句式接近已索引 FAQ"},
+    {"query": "今天北京天气怎么样？", "answerable": false, "note": "完全域外"}
+  ]
+}
