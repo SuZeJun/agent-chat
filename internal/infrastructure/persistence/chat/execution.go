@@ -86,6 +86,51 @@ func (repository *Repository) BeginRunAttempt(
 	return source, nil
 }
 
+// AppendRunProgress 在 Run 执行过程中追加进度事件，不改变 Run 状态。
+//
+// 仅在 Run 处于 running 时追加：Run 已终态时进度事件只会污染事件序列；
+// 该情况返回 nil 而非错误，因为进度投递是尽力而为的，不应升级为 Run 失败。
+func (repository *Repository) AppendRunProgress(
+	ctx context.Context,
+	command domain.AppendRunProgressCommand,
+) error {
+	if err := command.Validate(); err != nil {
+		return fmt.Errorf(
+			"append agent run progress: %w: %w",
+			domain.ErrInvalidCommand,
+			err,
+		)
+	}
+
+	transaction, err := repository.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return mapDatabaseError("append agent run progress", err)
+	}
+	defer func() {
+		_ = transaction.Rollback(ctx)
+	}()
+
+	var status domain.RunStatus
+	if err := transaction.QueryRow(ctx, `
+		SELECT status
+		FROM agent_runs
+		WHERE id = $1
+		FOR UPDATE
+	`, command.RunID).Scan(&status); err != nil {
+		return mapDatabaseError("load agent run for progress", err)
+	}
+	if status != domain.RunStatusRunning {
+		return nil
+	}
+	if err := appendRunEvents(ctx, transaction, command.RunID, command.Events); err != nil {
+		return err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return mapDatabaseError("append agent run progress", err)
+	}
+	return nil
+}
+
 // CompleteRun 原子保存 Assistant Message、Graph Result、事件并结束 Run。
 func (repository *Repository) CompleteRun(
 	ctx context.Context,

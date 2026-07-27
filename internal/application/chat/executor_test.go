@@ -3,7 +3,10 @@ package chat
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,13 +18,41 @@ type fakeRunRepository struct {
 	source          domain.RunSource
 	beginCommand    domain.BeginRunAttempt
 	beginErr        error
+	progressEvents  []domain.EventDraft
+	progressErr     error
 	completeCommand domain.CompleteRunCommand
 	completeErr     error
 	failureCommand  domain.RecordRunFailureCommand
 	failureErr      error
+	mutex           sync.Mutex
 	beginCalls      int
 	completeCalls   int
 	failureCalls    int
+}
+
+func (repository *fakeRunRepository) AppendRunProgress(
+	_ context.Context,
+	command domain.AppendRunProgressCommand,
+) error {
+	repository.mutex.Lock()
+	defer repository.mutex.Unlock()
+	repository.progressEvents = append(repository.progressEvents, command.Events...)
+	return repository.progressErr
+}
+
+// progressOfType 返回指定类型的进度事件，供断言运行期发出的内容。
+func (repository *fakeRunRepository) progressOfType(
+	eventType domain.EventType,
+) []domain.EventDraft {
+	repository.mutex.Lock()
+	defer repository.mutex.Unlock()
+	events := make([]domain.EventDraft, 0, len(repository.progressEvents))
+	for _, event := range repository.progressEvents {
+		if event.Type == eventType {
+			events = append(events, event)
+		}
+	}
+	return events
 }
 
 func (repository *fakeRunRepository) BeginRunAttempt(
@@ -74,13 +105,38 @@ type fakeGraphRunner struct {
 	calls  int
 }
 
+// Run 复现真实 Graph 的 Observer 行为：先上报检索与决策，再逐块上报回答。
+//
+// 若替身不调用 Observer，执行器的进度接线就完全没有被测试覆盖——回答一次性
+// 出现这类回归将无法被发现。
 func (runner *fakeGraphRunner) Run(
-	_ context.Context,
+	ctx context.Context,
 	input agentgraph.Input,
 ) (agentgraph.Output, error) {
 	runner.calls++
 	runner.input = input
-	return runner.output, runner.err
+	if runner.err != nil {
+		return agentgraph.Output{}, runner.err
+	}
+
+	observer := agentgraph.ObserverFromContext(ctx)
+	observer.OnRetrieval(ctx, runner.output.Assessment.Evidence)
+	observer.OnAssessment(ctx, runner.output.Assessment)
+	for _, delta := range runner.deltas() {
+		observer.OnAnswerDelta(ctx, delta)
+	}
+	return runner.output, nil
+}
+
+// deltas 把回答切成多块，模拟流式生成。
+func (runner *fakeGraphRunner) deltas() []string {
+	runes := []rune(runner.output.Answer)
+	chunks := make([]string, 0, len(runes))
+	for start := 0; start < len(runes); start += 4 {
+		end := min(start+4, len(runes))
+		chunks = append(chunks, string(runes[start:end]))
+	}
+	return chunks
 }
 
 func TestExecuteRunCompletesGraphResultAndEvents(t *testing.T) {
@@ -118,15 +174,26 @@ func TestExecuteRunCompletesGraphResultAndEvents(t *testing.T) {
 	for index, event := range command.Events {
 		eventTypes[index] = event.Type
 	}
+	// 检索、决策与回答增量已在运行期发出，终态提交只补引用并收尾；
+	// 若这里再出现 message.delta，客户端累积出的回答会翻倍。
 	expectedTypes := []domain.EventType{
-		domain.EventTypeRetrievalCompleted,
-		domain.EventTypeAnswerabilityDecided,
-		domain.EventTypeMessageDelta,
 		domain.EventTypeMessageCitation,
 		domain.EventTypeRunCompleted,
 	}
 	if !reflect.DeepEqual(eventTypes, expectedTypes) {
 		t.Fatalf("unexpected completion events: %#v", eventTypes)
+	}
+	if len(repository.progressOfType(domain.EventTypeRetrievalCompleted)) != 1 ||
+		len(repository.progressOfType(domain.EventTypeAnswerabilityDecided)) != 1 {
+		t.Fatalf("progress events were not emitted: %#v", repository.progressEvents)
+	}
+	// 增量拼接必须等于持久化的回答，否则客户端看到的内容与最终结果不一致。
+	var streamed strings.Builder
+	for _, event := range repository.progressOfType(domain.EventTypeMessageDelta) {
+		streamed.WriteString(event.Payload["delta"].(string))
+	}
+	if streamed.String() != runner.output.Answer {
+		t.Fatalf("streamed answer %q differs from result %q", streamed.String(), runner.output.Answer)
 	}
 	if command.Result["answer"] != runner.output.Answer {
 		t.Fatalf("Graph result was not persisted: %#v", command.Result)
@@ -430,6 +497,7 @@ func newTestExecutor(
 		factory,
 		&sequentialIDGenerator{},
 		fixedClock{now: now},
+		slog.New(slog.DiscardHandler),
 	)
 	if err != nil {
 		t.Fatalf("NewExecutor returned error: %v", err)

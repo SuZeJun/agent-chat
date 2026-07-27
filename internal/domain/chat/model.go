@@ -506,6 +506,38 @@ func (command BeginRunAttempt) Validate() error {
 	return nil
 }
 
+// AppendRunProgressCommand 在 Run 执行过程中追加进度事件。
+//
+// 与终态提交分开：进度只描述执行到哪一步，不改变 Run 状态，也不产生消息；
+// 权威结果仍由 CompleteRunCommand 原子提交。
+type AppendRunProgressCommand struct {
+	RunID  string
+	Events []EventDraft
+}
+
+// Validate 限制可在运行期追加的事件类型，避免绕过终态提交写入结果性事件。
+func (command AppendRunProgressCommand) Validate() error {
+	if err := validateID("agent run ID", command.RunID); err != nil {
+		return err
+	}
+	if len(command.Events) == 0 {
+		return errors.New("agent run progress events must not be empty")
+	}
+	for _, event := range command.Events {
+		if err := event.Validate(); err != nil {
+			return err
+		}
+		switch event.Type {
+		case EventTypeRetrievalCompleted,
+			EventTypeAnswerabilityDecided,
+			EventTypeMessageDelta:
+		default:
+			return errors.New("event type is not allowed as run progress")
+		}
+	}
+	return nil
+}
+
 // CompleteRunCommand 是成功结果、Assistant Message 和事件的原子提交。
 type CompleteRunCommand struct {
 	RunID       string
@@ -538,7 +570,8 @@ func (command CompleteRunCommand) Validate() error {
 	if len(encodedResult) > 256<<10 {
 		return errors.New("agent run result exceeds 256 KiB")
 	}
-	if len(command.Events) < 4 {
+	// 检索、决策与回答增量在运行期即已发出，终态提交只补引用并收尾。
+	if len(command.Events) == 0 {
 		return errors.New("agent run completion events are incomplete")
 	}
 	for _, event := range command.Events {
@@ -551,13 +584,10 @@ func (command CompleteRunCommand) Validate() error {
 			return err
 		}
 	}
-	if command.Events[0].Type != EventTypeRetrievalCompleted ||
-		command.Events[1].Type != EventTypeAnswerabilityDecided ||
-		command.Events[2].Type != EventTypeMessageDelta ||
-		command.Events[len(command.Events)-1].Type != EventTypeRunCompleted {
+	if command.Events[len(command.Events)-1].Type != EventTypeRunCompleted {
 		return errors.New("agent run completion event order is invalid")
 	}
-	for _, event := range command.Events[3 : len(command.Events)-1] {
+	for _, event := range command.Events[:len(command.Events)-1] {
 		if event.Type != EventTypeMessageCitation {
 			return errors.New("only citation events may precede run.completed")
 		}

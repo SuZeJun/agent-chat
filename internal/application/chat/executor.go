@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 // RunRepository 定义一次 Agent Run 执行所需的状态事务。
 type RunRepository interface {
 	BeginRunAttempt(context.Context, domain.BeginRunAttempt) (domain.RunSource, error)
+	AppendRunProgress(context.Context, domain.AppendRunProgressCommand) error
 	CompleteRun(context.Context, domain.CompleteRunCommand) error
 	RecordRunFailure(context.Context, domain.RecordRunFailureCommand) error
 }
@@ -37,14 +39,19 @@ type Executor struct {
 	factory     RuntimeFactory
 	idGenerator IDGenerator
 	clock       Clock
+	logger      *slog.Logger
 }
 
 // NewExecutor 创建 Agent Run 执行用例。
+//
+// logger 仅用于记录尽力而为的进度投递失败；这类失败不会中断 Run，因此不能
+// 通过返回值传播，只能落到日志。
 func NewExecutor(
 	repository RunRepository,
 	factory RuntimeFactory,
 	idGenerator IDGenerator,
 	clock Clock,
+	logger *slog.Logger,
 ) (*Executor, error) {
 	if repository == nil {
 		return nil, errors.New("run repository is required")
@@ -58,11 +65,15 @@ func NewExecutor(
 	if clock == nil {
 		return nil, errors.New("run clock is required")
 	}
+	if logger == nil {
+		return nil, errors.New("run logger is required")
+	}
 	return &Executor{
 		repository:  repository,
 		factory:     factory,
 		idGenerator: idGenerator,
 		clock:       clock,
+		logger:      logger,
 	}, nil
 }
 
@@ -129,7 +140,24 @@ func (executor *Executor) ExecuteRun(
 			err,
 		)
 	}
-	output, err := runtime.Run(ctx, agentgraph.Input{Query: source.Message.Content})
+	// 消息 ID 必须在生成开始前分配：回答增量在运行期就要引用它。
+	messageID := executor.idGenerator.NewID("msg_")
+	progress := newRunProgress(
+		executor.repository,
+		executor.idGenerator,
+		executor.clock,
+		executor.logger,
+		request.RunID,
+		messageID,
+	)
+
+	output, err := runtime.Run(
+		agentgraph.WithObserver(ctx, progress),
+		agentgraph.Input{Query: source.Message.Content},
+	)
+	// 失败时也要送出残余增量：已经产生的内容对排查有价值，重试会以
+	// run.started 为界让消费方重置，不会与新一次尝试的内容混在一起。
+	progress.Flush(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
@@ -145,7 +173,6 @@ func (executor *Executor) ExecuteRun(
 	}
 
 	completedAt := executor.clock.Now().UTC()
-	messageID := executor.idGenerator.NewID("msg_")
 	result, err := graphResult(output)
 	if err != nil {
 		return executor.failAttempt(
@@ -225,42 +252,16 @@ func graphTraceSteps(trace []agentgraph.TraceStep) []domain.RunStepDraft {
 	return steps
 }
 
-// completionEvents 按固定顺序生成检索、决策、回答、引用和终态事件。
+// completionEvents 生成引用和终态事件。
+//
+// 检索、决策与回答增量已在运行期经 Observer 发出，此处不再重复；否则客户端会
+// 收到两份内容，累积出的回答也会翻倍。
 func (executor *Executor) completionEvents(
 	messageID string,
 	output agentgraph.Output,
 	createdAt time.Time,
 ) []domain.EventDraft {
-	events := []domain.EventDraft{
-		{
-			ID:   executor.idGenerator.NewID("evt_"),
-			Type: domain.EventTypeRetrievalCompleted,
-			Payload: map[string]any{
-				"evidence": output.Assessment.Evidence,
-			},
-			CreatedAt: createdAt,
-		},
-		{
-			ID:   executor.idGenerator.NewID("evt_"),
-			Type: domain.EventTypeAnswerabilityDecided,
-			Payload: map[string]any{
-				"decision":   output.Assessment.Decision,
-				"reason":     output.Assessment.Reason,
-				"confidence": output.Assessment.Confidence,
-				"evidence":   output.Assessment.Evidence,
-			},
-			CreatedAt: createdAt,
-		},
-		{
-			ID:   executor.idGenerator.NewID("evt_"),
-			Type: domain.EventTypeMessageDelta,
-			Payload: map[string]any{
-				"messageId": messageID,
-				"delta":     output.Answer,
-			},
-			CreatedAt: createdAt,
-		},
-	}
+	events := make([]domain.EventDraft, 0, len(output.Citations)+1)
 	for _, citation := range output.Citations {
 		events = append(events, domain.EventDraft{
 			ID:   executor.idGenerator.NewID("evt_"),

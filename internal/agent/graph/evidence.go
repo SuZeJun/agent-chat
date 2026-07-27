@@ -136,3 +136,12 @@ func metadataInt(value any) (int, error) {
 		return 0, errors.New("metadata value is not an integer")
 	}
 }
+
+// evidenceOf 提取可持久化的证据快照，剥离仅用于 Prompt 的原始内容。
+func evidenceOf(sources []source) []Evidence {
+	evidence := make([]Evidence, len(sources))
+	for index := range sources {
+		evidence[index] = sources[index].evidence
+	}
+	return evidence
+}

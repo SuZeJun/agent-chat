@@ -11,10 +11,7 @@ const (
 
 // assessAnswerability 只依据服务端检索分数做确定性判断，不接受模型自报置信度。
 func assessAnswerability(sources []source, config Config) Assessment {
-	evidence := make([]Evidence, len(sources))
-	for index := range sources {
-		evidence[index] = sources[index].evidence
-	}
+	evidence := evidenceOf(sources)
 	if len(sources) == 0 {
 		return Assessment{
 			Decision: DecisionUnanswerable,

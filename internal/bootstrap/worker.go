@@ -79,6 +79,7 @@ func RunWorker(ctx context.Context, output io.Writer) error {
 			graphFactory,
 			chatapplication.UUIDGenerator{},
 			chatapplication.SystemClock{},
+			runtime.logger,
 		)
 		if err != nil {
 			return err
