@@ -51,9 +51,14 @@ function DecisionNotice({ state }: { state: AssistantState }) {
       </p>
       <p className="mt-2 text-sm whitespace-pre-wrap">{state.answer}</p>
       {state.nextAction === "request_human_support" ? (
-        <Button variant="outline" size="sm" className="mt-3" disabled>
-          联系人工支持
-        </Button>
+        // 后端尚无转人工接口，人工接管属于阶段 2；此处保留入口但明确标注不可用，
+        // 避免出现点了没反应又没有任何解释的按钮。
+        <div className="mt-3 flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled>
+            联系人工支持
+          </Button>
+          <span className="text-xs text-muted-foreground">人工接管将在后续阶段支持</span>
+        </div>
       ) : null}
     </div>
   );
