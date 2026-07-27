@@ -59,8 +59,9 @@ func (err *ModelProviderError) CanRetry() bool {
 
 // DeepSeekChatModel 为 Eino ChatModel 增加供应商错误脱敏边界。
 type DeepSeekChatModel struct {
-	inner einomodel.ToolCallingChatModel
-	model string
+	inner   einomodel.ToolCallingChatModel
+	model   string
+	timeout time.Duration
 }
 
 // NewDeepSeekChatModel 创建使用 OpenAI 兼容协议的 DeepSeek Eino ChatModel。
@@ -98,9 +99,8 @@ func newDeepSeekChatModel(
 	if cfg.Thinking {
 		thinkingType = "enabled"
 	}
-	// Eino 在 HTTPClient 非空时忽略自身的 Timeout 字段，实际生效的是下方
-	// sanitizedModelHTTPClient 设置的 http.Client.Timeout；此处保留 Timeout
-	// 只为表达配置意图，修改超时语义必须改动 sanitizedModelHTTPClient。
+	// Eino 在 HTTPClient 非空时忽略自身的 Timeout 字段，实际生效的是
+	// sanitizedModelHTTPClient 构造的客户端；此处保留 Timeout 只为表达配置意图。
 	chatModel, err := einoopenai.NewChatModel(ctx, &einoopenai.ChatModelConfig{
 		APIKey:     cfg.APIKey,
 		BaseURL:    strings.TrimRight(cfg.BaseURL, "/"),
@@ -116,7 +116,11 @@ func newDeepSeekChatModel(
 	if err != nil {
 		return nil, sanitizeModelProviderError("create", err)
 	}
-	return &DeepSeekChatModel{inner: chatModel, model: cfg.Model}, nil
+	return &DeepSeekChatModel{
+		inner:   chatModel,
+		model:   cfg.Model,
+		timeout: cfg.Timeout,
+	}, nil
 }
 
 // GetType 返回不含密钥和端点的 Provider/模型身份，供 Eino Trace 展示。
@@ -125,12 +129,19 @@ func (chatModel *DeepSeekChatModel) GetType() string {
 }
 
 // Generate 生成完整回复，并在错误离开 Provider 边界前完成脱敏。
+//
+// 总时长上限在此施加，而不是设在共享的 http.Client 上：非流式调用的耗时应当
+// 有界，但同一个客户端也服务于 Stream，若把上限设在客户端层面，就会连带成为
+// 流式回答的总时长天花板。
 func (chatModel *DeepSeekChatModel) Generate(
 	ctx context.Context,
 	input []*schema.Message,
 	options ...einomodel.Option,
 ) (*schema.Message, error) {
-	message, err := chatModel.inner.Generate(ctx, input, options...)
+	generateContext, cancel := context.WithTimeout(ctx, chatModel.timeout)
+	defer cancel()
+
+	message, err := chatModel.inner.Generate(generateContext, input, options...)
 	if err != nil {
 		return nil, sanitizeModelProviderError("generate", err)
 	}
@@ -138,6 +149,10 @@ func (chatModel *DeepSeekChatModel) Generate(
 }
 
 // Stream 创建流式回复，并同时脱敏建连错误和后续 Recv 错误。
+//
+// 刻意不施加总时长上限：流式响应体在整个生成过程中持续读取，任何总时长限制都会
+// 成为回答长度的天花板，把一个合法的长回答从中间掐断。连接与首字节由 Transport
+// 层的超时约束，整体生命周期由调用方的 Context 负责（Worker 侧为任务超时）。
 func (chatModel *DeepSeekChatModel) Stream(
 	ctx context.Context,
 	input []*schema.Message,
@@ -166,7 +181,11 @@ func (chatModel *DeepSeekChatModel) WithTools(
 	if err != nil {
 		return nil, sanitizeModelProviderError("bind tools", err)
 	}
-	return &DeepSeekChatModel{inner: modelWithTools, model: chatModel.model}, nil
+	return &DeepSeekChatModel{
+		inner:   modelWithTools,
+		model:   chatModel.model,
+		timeout: chatModel.timeout,
+	}, nil
 }
 
 func sanitizeModelProviderError(operation string, err error) error {
@@ -205,22 +224,27 @@ func modelProviderStatusCode(err error) int {
 
 // sanitizedModelHTTPClient 在 Eino SDK 和 Callback 解析响应前移除供应商错误正文。
 //
-// http.Client.Timeout 覆盖响应体读取全程，对当前使用的 Generate 是正确的整请求
-// 上限，但它同时会成为 Stream 的总时长上限：超过该时长的流式回答会被中途切断。
-// 目前没有任何调用方使用 Stream，因此该限制尚未生效。接入流式回答时不能简单删除
-// 此处的 Timeout（Eino 会忽略 ChatModelConfig.Timeout，删除等于让 LLM_TIMEOUT
-// 完全失效），而应区分两条路径：Generate 保留整请求上限，Stream 改用
-// Transport 层的连接与首字节超时。
+// 不设置 http.Client.Timeout：它覆盖响应体读取全程，而流式响应体在整个生成过程中
+// 持续读取，任何客户端级总时长都会成为回答长度的天花板。改为在 Transport 层限制
+// 连接与首字节——这两段无论流式与否都应当有界；非流式的整请求上限由 Generate
+// 自行通过 Context 施加。
 func sanitizedModelHTTPClient(timeout time.Duration, source *http.Client) *http.Client {
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{}
 	if source != nil {
 		cloned := *source
 		client = &cloned
-		client.Timeout = timeout
 	}
+	client.Timeout = 0
+
 	transport := client.Transport
 	if transport == nil {
 		transport = http.DefaultTransport
+	}
+	if defaultTransport, ok := transport.(*http.Transport); ok {
+		bounded := defaultTransport.Clone()
+		bounded.ResponseHeaderTimeout = timeout
+		bounded.TLSHandshakeTimeout = timeout
+		transport = bounded
 	}
 	client.Transport = &sanitizedModelTransport{base: transport}
 	return client

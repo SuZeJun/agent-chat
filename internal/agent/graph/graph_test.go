@@ -52,6 +52,43 @@ func (chatModel *fakeChatModel) Generate(
 	return schema.AssistantMessage(chatModel.answer, nil), nil
 }
 
+// fakeChunkRunes 刻意小于来源标记长度，确保 [S1] 会跨越增量边界，
+// 从而覆盖「引用必须在流结束后再解析」这一约束。
+const fakeChunkRunes = 3
+
+// Stream 按固定长度切分回答，使测试真正走到逐块消费与增量上报路径。
+func (chatModel *fakeChatModel) Stream(
+	_ context.Context,
+	messages []*schema.Message,
+	_ ...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	chatModel.calls++
+	chatModel.messages = messages
+	if chatModel.err != nil {
+		return nil, chatModel.err
+	}
+
+	chunks := splitRunes(chatModel.answer, fakeChunkRunes)
+	reader, writer := schema.Pipe[*schema.Message](len(chunks) + 1)
+	go func() {
+		defer writer.Close()
+		for _, chunk := range chunks {
+			writer.Send(schema.AssistantMessage(chunk, nil), nil)
+		}
+	}()
+	return reader, nil
+}
+
+func splitRunes(value string, size int) []string {
+	runes := []rune(value)
+	chunks := make([]string, 0, len(runes)/size+1)
+	for start := 0; start < len(runes); start += size {
+		end := min(start+size, len(runes))
+		chunks = append(chunks, string(runes[start:end]))
+	}
+	return chunks
+}
+
 type retryableTestError struct {
 	message string
 }

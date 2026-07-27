@@ -66,6 +66,9 @@ type fixtureModel struct {
 	calls int
 }
 
+// fixtureAnswer 是 answerable 分支的确定性回答。
+const fixtureAnswer = "这是由企业知识支持的回答。[S1]"
+
 // Generate 为 answerable 分支提供确定性回答，其他分支不应调用该方法。
 func (chatModel *fixtureModel) Generate(
 	_ context.Context,
@@ -73,7 +76,29 @@ func (chatModel *fixtureModel) Generate(
 	_ ...model.Option,
 ) (*schema.Message, error) {
 	chatModel.calls++
-	return schema.AssistantMessage("这是由企业知识支持的回答。[S1]", nil), nil
+	return schema.AssistantMessage(fixtureAnswer, nil), nil
+}
+
+// Stream 分块返回同一回答，使评估与生产一样走流式路径。
+//
+// 分块长度刻意小于来源标记，确保 [S1] 跨越增量边界，评估因此也覆盖
+// 「引用必须在流结束后解析」这一约束。
+func (chatModel *fixtureModel) Stream(
+	_ context.Context,
+	_ []*schema.Message,
+	_ ...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	chatModel.calls++
+	runes := []rune(fixtureAnswer)
+	reader, writer := schema.Pipe[*schema.Message](len(runes))
+	go func() {
+		defer writer.Close()
+		for start := 0; start < len(runes); start += 3 {
+			end := min(start+3, len(runes))
+			writer.Send(schema.AssistantMessage(string(runes[start:end]), nil), nil)
+		}
+	}()
+	return reader, nil
 }
 
 // main 解析报告路径，并通过退出码向 pytest 和 CI 暴露评估门槛结果。

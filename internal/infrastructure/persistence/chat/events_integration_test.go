@@ -57,6 +57,18 @@ func TestLoadRunEventsScopesAndResumesAgainstPostgres(t *testing.T) {
 		t.Fatalf("begin run: %v", err)
 	}
 	completedAt := now.Add(2 * time.Second)
+	// 进度事件同样进入事件序列，断点续传必须能覆盖它们。
+	if err := repository.AppendRunProgress(ctx, domain.AppendRunProgressCommand{
+		RunID: started.RunID,
+		Events: []domain.EventDraft{
+			executionEvent("event-events-retrieval", domain.EventTypeRetrievalCompleted, completedAt, map[string]any{"evidence": []any{}}),
+			executionEvent("event-events-gate", domain.EventTypeAnswerabilityDecided, completedAt, map[string]any{"decision": "answerable"}),
+			executionEvent("event-events-delta", domain.EventTypeMessageDelta, completedAt, map[string]any{"delta": "事件回答"}),
+		},
+	}); err != nil {
+		t.Fatalf("append run progress: %v", err)
+	}
+
 	if err := repository.CompleteRun(ctx, domain.CompleteRunCommand{
 		RunID: started.RunID,
 		Message: domain.Message{
@@ -69,9 +81,6 @@ func TestLoadRunEventsScopesAndResumesAgainstPostgres(t *testing.T) {
 		},
 		Result: map[string]any{"answer": "事件回答"},
 		Events: []domain.EventDraft{
-			executionEvent("event-events-retrieval", domain.EventTypeRetrievalCompleted, completedAt, map[string]any{"evidence": []any{}}),
-			executionEvent("event-events-gate", domain.EventTypeAnswerabilityDecided, completedAt, map[string]any{"decision": "answerable"}),
-			executionEvent("event-events-delta", domain.EventTypeMessageDelta, completedAt, map[string]any{"delta": "事件回答"}),
 			executionEvent("event-events-completed", domain.EventTypeRunCompleted, completedAt, map[string]any{"status": "completed"}),
 		},
 		CompletedAt: completedAt,

@@ -85,13 +85,26 @@ func TestTruncateTraceFieldKeepsValidUTF8(t *testing.T) {
 // Graph。测试替身不会触发 Eino Callback，因此只有真实组件才能覆盖到组件级 Trace：
 // 该组件不是 Graph 节点，RunInfo.Name 为空，曾导致 Run 结果在提交阶段被拒绝。
 func TestRealChatModelProducesPersistableTrace(t *testing.T) {
+	// 受知识约束的回答走流式，因此这里必须返回 SSE 分块而非单个 JSON 响应。
+	// Eino 会请求 stream_options.include_usage，用量随最后一个分块返回。
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(writer, `{"id":"trace-probe","object":"chat.completion","created":1,`+
-			`"model":"test-model","choices":[{"index":0,"message":`+
-			`{"role":"assistant","content":"请在设置页点击重置密码。[S1]"},`+
-			`"finish_reason":"stop"}],"usage":{"prompt_tokens":100,`+
-			`"completion_tokens":20,"total_tokens":120}}`)
+		writer.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := writer.(http.Flusher)
+		if !ok {
+			return
+		}
+		for _, delta := range []string{"请在设置页", "点击重置密码。", "[S1]"} {
+			fmt.Fprintf(writer, "data: {\"id\":\"trace-probe\",\"object\":\"chat.completion.chunk\","+
+				"\"created\":1,\"model\":\"test-model\",\"choices\":[{\"index\":0,"+
+				"\"delta\":{\"role\":\"assistant\",\"content\":%q}}]}\n\n", delta)
+			flusher.Flush()
+		}
+		fmt.Fprint(writer, "data: {\"id\":\"trace-probe\",\"object\":\"chat.completion.chunk\","+
+			"\"created\":1,\"model\":\"test-model\",\"choices\":[{\"index\":0,"+
+			"\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,"+
+			"\"completion_tokens\":20,\"total_tokens\":120}}\n\n")
+		fmt.Fprint(writer, "data: [DONE]\n\n")
+		flusher.Flush()
 	}))
 	defer server.Close()
 

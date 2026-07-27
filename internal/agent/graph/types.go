@@ -149,8 +149,16 @@ func validThreshold(score float64) bool {
 }
 
 // ChatModel 定义 Graph 生成回答所需的最小 Eino ChatModel 能力。
+//
+// 受知识约束的回答使用 Stream，以便回答在生成过程中就能逐块送达客户端；
+// Generate 保留给不需要增量的调用方。
 type ChatModel interface {
 	Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error)
+	Stream(
+		context.Context,
+		[]*schema.Message,
+		...model.Option,
+	) (*schema.StreamReader[*schema.Message], error)
 }
 
 // Failure 是跨 Agent 边界返回的稳定错误，不暴露问题、知识内容或供应商响应。

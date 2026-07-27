@@ -103,16 +103,45 @@ func TestRunExecutionCommandsValidate(t *testing.T) {
 			CreatedAt:      now,
 		},
 		Result: map[string]any{"answer": "回答"},
+		// 检索、决策与回答增量在运行期发出，终态提交只允许引用与终态事件。
 		Events: []EventDraft{
-			testEventDraft("event-retrieval", EventTypeRetrievalCompleted, now),
-			testEventDraft("event-gate", EventTypeAnswerabilityDecided, now),
-			testEventDraft("event-delta", EventTypeMessageDelta, now),
+			testEventDraft("event-citation", EventTypeMessageCitation, now),
 			testEventDraft("event-completed", EventTypeRunCompleted, now),
 		},
 		CompletedAt: now,
 	}
 	if err := completion.Validate(); err != nil {
 		t.Fatalf("valid completion rejected: %v", err)
+	}
+
+	// 运行期事件若混进终态提交，客户端会收到两份内容。
+	polluted := completion
+	polluted.Events = []EventDraft{
+		testEventDraft("event-delta", EventTypeMessageDelta, now),
+		testEventDraft("event-completed", EventTypeRunCompleted, now),
+	}
+	if err := polluted.Validate(); err == nil {
+		t.Fatal("completion accepted a progress event")
+	}
+
+	progress := AppendRunProgressCommand{
+		RunID: "run-1",
+		Events: []EventDraft{
+			testEventDraft("event-retrieval", EventTypeRetrievalCompleted, now),
+			testEventDraft("event-gate", EventTypeAnswerabilityDecided, now),
+			testEventDraft("event-delta", EventTypeMessageDelta, now),
+		},
+	}
+	if err := progress.Validate(); err != nil {
+		t.Fatalf("valid progress command rejected: %v", err)
+	}
+
+	// 结果性事件不得绕过终态提交在运行期写入。
+	progress.Events = []EventDraft{
+		testEventDraft("event-completed", EventTypeRunCompleted, now),
+	}
+	if err := progress.Validate(); err == nil {
+		t.Fatal("progress accepted a terminal event")
 	}
 
 	failure := RecordRunFailureCommand{

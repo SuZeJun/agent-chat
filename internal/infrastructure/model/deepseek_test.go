@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -275,4 +276,79 @@ func (model *streamErrorChatModel) WithTools(
 	[]*schema.ToolInfo,
 ) (einomodel.ToolCallingChatModel, error) {
 	return model, nil
+}
+
+// TestDeepSeekTimeoutBoundsGenerateButNotStream 锁定两条调用路径的超时语义差异。
+//
+// 若把总时长上限设回共享的 http.Client，流式回答会在该时长处被从中间掐断；
+// 若为了流式而彻底去掉上限，非流式调用又会失去保护。两者必须分别成立。
+func TestDeepSeekTimeoutBoundsGenerateButNotStream(t *testing.T) {
+	const timeout = 300 * time.Millisecond
+
+	// 服务端先拖过 timeout 再逐块输出，模拟一次合法但耗时超过上限的长回答。
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		if bytes.Contains(body, []byte(`"stream":true`)) {
+			writer.Header().Set("Content-Type", "text/event-stream")
+			flusher := writer.(http.Flusher)
+			writer.WriteHeader(http.StatusOK)
+			flusher.Flush()
+			for _, delta := range []string{"慢", "但", "合法"} {
+				time.Sleep(timeout / 2)
+				fmt.Fprintf(writer, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\","+
+					"\"created\":1,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,"+
+					"\"delta\":{\"role\":\"assistant\",\"content\":%q}}]}\n\n", delta)
+				flusher.Flush()
+			}
+			fmt.Fprint(writer, "data: [DONE]\n\n")
+			flusher.Flush()
+			return
+		}
+		time.Sleep(2 * timeout)
+		writer.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(writer, `{"id":"x","object":"chat.completion","created":1,`+
+			`"model":"deepseek-v4-flash","choices":[{"index":0,"message":`+
+			`{"role":"assistant","content":"迟到的回答"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	chatModel, err := newDeepSeekChatModel(context.Background(), config.ChatModel{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+		Model:   "deepseek-v4-flash",
+		Timeout: timeout,
+	}, nil)
+	if err != nil {
+		t.Fatalf("create chat model: %v", err)
+	}
+	messages := []*schema.Message{schema.UserMessage("问题")}
+
+	t.Run("generate is bounded", func(t *testing.T) {
+		if _, err := chatModel.Generate(context.Background(), messages); err == nil {
+			t.Fatal("expected Generate to be bounded by the configured timeout")
+		}
+	})
+
+	t.Run("stream outlives the timeout", func(t *testing.T) {
+		stream, err := chatModel.Stream(context.Background(), messages)
+		if err != nil {
+			t.Fatalf("Stream returned error: %v", err)
+		}
+		defer stream.Close()
+
+		var answer strings.Builder
+		for {
+			chunk, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				t.Fatalf("stream was interrupted after %q: %v", answer.String(), err)
+			}
+			answer.WriteString(chunk.Content)
+		}
+		if answer.String() != "慢但合法" {
+			t.Fatalf("unexpected streamed answer %q", answer.String())
+		}
+	})
 }

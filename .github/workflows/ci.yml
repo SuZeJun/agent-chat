@@ -105,6 +105,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Test
+        run: npm test
+
       # 构建不依赖运行时配置：页面是 force-dynamic，配置在请求时才读取。
       - name: Build
         run: npm run build

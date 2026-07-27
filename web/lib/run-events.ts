@@ -52,8 +52,13 @@ export function reduceRunEvent(
   const payload = asRecord(event.payload);
 
   switch (event.type) {
+    // 每次尝试都以 run.started 开始，据此清空上一次尝试已累积的内容。
+    // 失败的尝试可能已经发出过增量，若不重置，重试产生的回答会接在残段后面。
     case "run.started":
-      return { ...state, stage: "retrieving" };
+      return {
+        ...initialAssistantState(state.runId),
+        stage: "retrieving",
+      };
 
     case "retrieval.completed":
       return { ...state, stage: "deciding", evidence: toEvidence(payload.evidence) };

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	einoretriever "github.com/cloudwego/eino/components/retriever"
@@ -177,16 +178,18 @@ func (deps dependencies) retrieveKnowledge(
 	}
 	state.sources = sources
 	state.nodePath = append(state.nodePath, nodeRetrieveKnowledge)
+	ObserverFromContext(ctx).OnRetrieval(ctx, evidenceOf(sources))
 	return state, nil
 }
 
 // answerabilityGate 生成确定性 Assessment，后续分支只能读取该结果。
 func (deps dependencies) answerabilityGate(
-	_ context.Context,
+	ctx context.Context,
 	state runState,
 ) (runState, error) {
 	state.assessment = assessAnswerability(state.sources, deps.config)
 	state.nodePath = append(state.nodePath, nodeAnswerabilityGate)
+	ObserverFromContext(ctx).OnAssessment(ctx, state.assessment)
 	return state, nil
 }
 
@@ -220,52 +223,82 @@ func (deps dependencies) groundedGenerate(
 	if err != nil {
 		return Output{}, newFailure("rag_prompt_failed", false, err)
 	}
-	message, err := deps.chatModel.Generate(ctx, messages)
+	answer, err := deps.streamAnswer(ctx, messages)
 	if err != nil {
-		return Output{}, newFailure("rag_generation_failed", retryAllowed(err), err)
+		return Output{}, err
 	}
-	if message == nil {
-		return Output{}, newFailure(
-			"invalid_rag_answer",
-			true,
-			errors.New("chat model returned nil message"),
-		)
-	}
-	if message.Role != schema.Assistant {
-		return Output{}, newFailure(
-			"invalid_rag_answer",
-			true,
-			errors.New("chat model returned non-assistant message"),
-		)
-	}
-	citations, err := citationsFromAnswer(message.Content, state.sources)
+	// 引用只能在拿到完整回答后解析：来源标记可能落在任意两个增量的交界处。
+	citations, err := citationsFromAnswer(answer, state.sources)
 	if err != nil {
 		return Output{}, newFailure("invalid_rag_answer", true, err)
 	}
-	state.answer = strings.TrimSpace(message.Content)
+	state.answer = strings.TrimSpace(answer)
 	state.citations = citations
 	state.nodePath = append(state.nodePath, nodeGroundedGenerate)
 	return state.output(), nil
 }
 
+// streamAnswer 消费模型流并逐块上报增量，返回拼接后的完整回答。
+//
+// 单个增量不做角色校验：供应商通常只在首块携带 Role，后续块仅有内容；
+// 校验放在流结束后针对完整结果进行。
+func (deps dependencies) streamAnswer(
+	ctx context.Context,
+	messages []*schema.Message,
+) (string, error) {
+	stream, err := deps.chatModel.Stream(ctx, messages)
+	if err != nil {
+		return "", newFailure("rag_generation_failed", retryAllowed(err), err)
+	}
+	defer stream.Close()
+
+	observer := ObserverFromContext(ctx)
+	var answer strings.Builder
+	for {
+		chunk, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", newFailure("rag_generation_failed", retryAllowed(err), err)
+		}
+		if chunk == nil || chunk.Content == "" {
+			continue
+		}
+		answer.WriteString(chunk.Content)
+		observer.OnAnswerDelta(ctx, chunk.Content)
+	}
+	if strings.TrimSpace(answer.String()) == "" {
+		return "", newFailure(
+			"invalid_rag_answer",
+			true,
+			errors.New("chat model returned empty answer"),
+		)
+	}
+	return answer.String(), nil
+}
+
 // askClarification 返回稳定追问文案，不调用模型，也不生成引用。
 func askClarification(
-	_ context.Context,
+	ctx context.Context,
 	state runState,
 ) (Output, error) {
 	state.answer = "我找到了可能相关的知识，但现有信息不足以可靠判断。请补充具体产品、操作步骤、错误信息或期望结果。"
 	state.nextAction = NextActionProvideDetails
 	state.nodePath = append(state.nodePath, nodeAskClarification)
+	// 非流式分支同样经由 Observer 发出回答，使三条分支的事件形状保持一致。
+	ObserverFromContext(ctx).OnAnswerDelta(ctx, state.answer)
 	return state.output(), nil
 }
 
 // refuseAnswer 在证据不足时明确拒绝猜测，并提示转人工路径。
 func refuseAnswer(
-	_ context.Context,
+	ctx context.Context,
 	state runState,
 ) (Output, error) {
 	state.answer = "当前知识库没有足够信息支持可靠回答，我不会猜测。你可以补充更多信息，或联系人工支持。"
 	state.nextAction = NextActionRequestHumanSupport
 	state.nodePath = append(state.nodePath, nodeRefuseAnswer)
+	ObserverFromContext(ctx).OnAnswerDelta(ctx, state.answer)
 	return state.output(), nil
 }

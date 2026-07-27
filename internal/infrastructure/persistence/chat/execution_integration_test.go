@@ -63,6 +63,19 @@ func TestRunExecutionLifecycleAgainstPostgres(t *testing.T) {
 		t.Fatalf("unexpected run source: %#v", source)
 	}
 
+	// 检索、决策与回答增量在运行期追加，使客户端在 Run 结束前即可观察到进度。
+	progressAt := now.Add(1500 * time.Millisecond)
+	if err := repository.AppendRunProgress(ctx, domain.AppendRunProgressCommand{
+		RunID: started.RunID,
+		Events: []domain.EventDraft{
+			executionEvent("event-retrieval", domain.EventTypeRetrievalCompleted, progressAt, map[string]any{"evidence": []any{}}),
+			executionEvent("event-answerability", domain.EventTypeAnswerabilityDecided, progressAt, map[string]any{"decision": "answerable"}),
+			executionEvent("event-delta", domain.EventTypeMessageDelta, progressAt, map[string]any{"delta": "请在设置页重置密码。[S1]"}),
+		},
+	}); err != nil {
+		t.Fatalf("append run progress: %v", err)
+	}
+
 	completedAt := now.Add(2 * time.Second)
 	command := domain.CompleteRunCommand{
 		RunID: started.RunID,
@@ -79,9 +92,6 @@ func TestRunExecutionLifecycleAgainstPostgres(t *testing.T) {
 			"nodePath": []string{"retrieve", "answerability", "generate"},
 		},
 		Events: []domain.EventDraft{
-			executionEvent("event-retrieval", domain.EventTypeRetrievalCompleted, completedAt, map[string]any{"evidence": []any{}}),
-			executionEvent("event-answerability", domain.EventTypeAnswerabilityDecided, completedAt, map[string]any{"decision": "answerable"}),
-			executionEvent("event-delta", domain.EventTypeMessageDelta, completedAt, map[string]any{"delta": "请在设置页重置密码。[S1]"}),
 			executionEvent("event-citation", domain.EventTypeMessageCitation, completedAt, map[string]any{"sourceId": "S1"}),
 			executionEvent("event-completed", domain.EventTypeRunCompleted, completedAt, map[string]any{"status": "completed"}),
 		},
@@ -130,6 +140,17 @@ func TestRunExecutionLifecycleAgainstPostgres(t *testing.T) {
 	}
 	if err := repository.CompleteRun(ctx, command); err != nil {
 		t.Fatalf("idempotent completion failed: %v", err)
+	}
+
+	// Run 已终态后到达的进度必须被丢弃：迟到的增量只会污染事件序列，
+	// 而进度投递是尽力而为的，不应因此报错。
+	if err := repository.AppendRunProgress(ctx, domain.AppendRunProgressCommand{
+		RunID: started.RunID,
+		Events: []domain.EventDraft{
+			executionEvent("event-late", domain.EventTypeMessageDelta, completedAt.Add(time.Second), map[string]any{"delta": "迟到"}),
+		},
+	}); err != nil {
+		t.Fatalf("late progress must be ignored, got error: %v", err)
 	}
 	assertRunEventCount(t, ctx, pool, started.RunID, 7)
 }
@@ -295,9 +316,6 @@ func TestCompleteRunRejectsConversationTakeover(t *testing.T) {
 		},
 		Result: map[string]any{"answer": "不应写入的回答"},
 		Events: []domain.EventDraft{
-			executionEvent("event-takeover-retrieval", domain.EventTypeRetrievalCompleted, now.Add(2*time.Second), map[string]any{}),
-			executionEvent("event-takeover-gate", domain.EventTypeAnswerabilityDecided, now.Add(2*time.Second), map[string]any{}),
-			executionEvent("event-takeover-delta", domain.EventTypeMessageDelta, now.Add(2*time.Second), map[string]any{}),
 			executionEvent("event-takeover-completed", domain.EventTypeRunCompleted, now.Add(2*time.Second), map[string]any{}),
 		},
 		CompletedAt: now.Add(2 * time.Second),
