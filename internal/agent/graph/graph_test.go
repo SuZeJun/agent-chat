@@ -163,8 +163,11 @@ func TestRuntimeRoutesAllAnswerabilityBranches(t *testing.T) {
 				output.NextAction != test.nextAction {
 				t.Fatalf("unexpected output: %#v", output)
 			}
+			// 未配置工具时规划节点直通，但仍出现在路径中：节点路径反映实际
+			// 执行的节点，而非是否产生了决策。
 			expectedPath := []string{
 				nodeValidateInput,
+				nodePlanAction,
 				nodeRetrieveKnowledge,
 				nodeAnswerabilityGate,
 				test.lastNode,

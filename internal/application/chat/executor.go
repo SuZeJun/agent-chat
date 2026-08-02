@@ -23,7 +23,9 @@ type RunRepository interface {
 
 // RuntimeFactory 按会话绑定的知识库创建隔离 RAG Runtime。
 type RuntimeFactory interface {
-	Build(context.Context, string) (agentgraph.Runner, error)
+	// Build 接收知识库 ID 与客户 ID：两者都是服务端从会话推导的授权作用域，
+	// Runtime 内的检索器与工具据此绑定，运行期不可更改。
+	Build(ctx context.Context, knowledgeBaseID string, customerID string) (agentgraph.Runner, error)
 }
 
 // ExecuteRunRequest 包含 Worker 当前持有的任务尝试信息。
@@ -130,7 +132,7 @@ func (executor *Executor) ExecuteRun(
 		return nil
 	}
 
-	runtime, err := executor.factory.Build(ctx, source.KnowledgeBaseID)
+	runtime, err := executor.factory.Build(ctx, source.KnowledgeBaseID, source.CustomerID)
 	if err != nil {
 		return executor.failAttempt(
 			ctx,

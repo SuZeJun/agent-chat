@@ -339,6 +339,7 @@ func loadRunSourceForUpdate(
 			message.content,
 			message.created_at,
 			conversation.knowledge_base_id,
+			conversation.customer_id,
 			conversation.status
 		FROM agent_runs AS run
 		JOIN messages AS message
@@ -363,6 +364,7 @@ func loadRunSourceForUpdate(
 		&source.Message.Content,
 		&source.Message.CreatedAt,
 		&source.KnowledgeBaseID,
+		&source.CustomerID,
 		&source.Conversation,
 	)
 	if err != nil {

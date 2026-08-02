@@ -6,6 +6,11 @@ import (
 	"math"
 
 	"agent-chat/internal/agent/retrieval"
+	agenttool "agent-chat/internal/agent/tool"
+	crm "agent-chat/internal/domain/crm"
+
+	einomodel "github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 )
 
 const (
@@ -34,18 +39,48 @@ func DefaultFactoryConfig() FactoryConfig {
 	}
 }
 
+// ToolCallingModel 是可绑定工具声明的模型。
+//
+// 与 ChatModel 分开声明：绑定工具会返回新实例，而 Graph 只需要绑定完成后的
+// planner。未提供该依赖时 Factory 构建纯知识 Runtime。
+type ToolCallingModel interface {
+	WithTools([]*schema.ToolInfo) (einomodel.ToolCallingChatModel, error)
+}
+
 // Factory 为会话绑定的知识库创建隔离的 RAG Runtime。
 type Factory struct {
-	retrievalService retrieval.Service
-	chatModel        ChatModel
-	config           FactoryConfig
+	retrievalService   retrieval.Service
+	chatModel          ChatModel
+	toolCallingModel   ToolCallingModel
+	subscriptionReader crm.SubscriptionReader
+	config             FactoryConfig
 }
+
+// WithSubscriptionTool 启用订阅查询工具。
+//
+// 两个依赖缺一不可：没有可绑定工具的模型就无人选择工具，没有 CRM 就无工具可用。
+func WithSubscriptionTool(
+	model ToolCallingModel,
+	reader crm.SubscriptionReader,
+) FactoryOption {
+	return func(factory *Factory) {
+		if model == nil || reader == nil {
+			return
+		}
+		factory.toolCallingModel = model
+		factory.subscriptionReader = reader
+	}
+}
+
+// FactoryOption 配置 Factory 的可选能力。
+type FactoryOption func(*Factory)
 
 // NewFactory 创建 RAG Runtime Factory。
 func NewFactory(
 	retrievalService retrieval.Service,
 	chatModel ChatModel,
 	config FactoryConfig,
+	options ...FactoryOption,
 ) (*Factory, error) {
 	if retrievalService == nil {
 		return nil, errors.New("RAG factory retrieval service is required")
@@ -65,17 +100,25 @@ func NewFactory(
 	if err := config.Graph.validate(); err != nil {
 		return nil, err
 	}
-	return &Factory{
+	factory := &Factory{
 		retrievalService: retrievalService,
 		chatModel:        chatModel,
 		config:           config,
-	}, nil
+	}
+	for _, option := range options {
+		option(factory)
+	}
+	return factory, nil
 }
 
-// Build 创建绑定单个服务端知识库 ID 的 Eino Retriever 和 RAG Graph。
+// Build 创建绑定单个知识库和单个客户的 Eino Retriever、工具集与 RAG Graph。
+//
+// 知识库 ID 与客户 ID 都由服务端从会话推导后传入；Runtime 内的检索器和工具都在
+// 此处完成作用域绑定，模型无法在运行期改变查询目标。
 func (factory *Factory) Build(
 	ctx context.Context,
 	knowledgeBaseID string,
+	customerID string,
 ) (Runner, error) {
 	retriever, err := retrieval.NewKnowledgeRetriever(
 		factory.retrievalService,
@@ -88,5 +131,41 @@ func (factory *Factory) Build(
 	if err != nil {
 		return nil, err
 	}
-	return NewRuntime(ctx, retriever, factory.chatModel, factory.config.Graph)
+
+	options, err := factory.toolOptions(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
+	return NewRuntime(ctx, retriever, factory.chatModel, factory.config.Graph, options...)
+}
+
+// toolOptions 为当前客户构建工具注册表并绑定到模型。
+//
+// 每次 Build 重新构建：工具的授权作用域是每个会话独有的，跨会话复用注册表会让
+// 一个客户的工具实例服务于另一个客户。
+func (factory *Factory) toolOptions(
+	ctx context.Context,
+	customerID string,
+) ([]RuntimeOption, error) {
+	if factory.toolCallingModel == nil || factory.subscriptionReader == nil {
+		return nil, nil
+	}
+
+	subscriptionTool, err := agenttool.NewSubscriptionTool(factory.subscriptionReader, customerID)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := agenttool.NewRegistry(subscriptionTool)
+	if err != nil {
+		return nil, err
+	}
+	infos, err := registry.Infos(ctx)
+	if err != nil {
+		return nil, err
+	}
+	planner, err := factory.toolCallingModel.WithTools(infos)
+	if err != nil {
+		return nil, err
+	}
+	return []RuntimeOption{WithTools(planner, registry, customerID)}, nil
 }

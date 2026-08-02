@@ -100,9 +100,21 @@ type Output struct {
 	Answer     string      `json:"answer"`
 	Assessment Assessment  `json:"assessment"`
 	Citations  []Citation  `json:"citations"`
+	ToolCalls  []ToolCall  `json:"toolCalls,omitempty"`
 	NextAction NextAction  `json:"nextAction,omitempty"`
 	NodePath   []string    `json:"nodePath"`
 	Trace      []TraceStep `json:"trace"`
+}
+
+// ToolCall 是一次工具调用的脱敏记录。
+//
+// 只保留工具名、结果状态和耗时；工具返回的客户数据不进入该记录，避免 Trace
+// 与 Run 结果承载业务明细。
+type ToolCall struct {
+	Name           string `json:"name"`
+	Status         string `json:"status"`
+	ErrorCode      string `json:"errorCode,omitempty"`
+	DurationMillis int64  `json:"durationMillis"`
 }
 
 // Config 控制 Answerability 阈值和进入模型 Prompt 的上下文上限。
@@ -161,6 +173,21 @@ type ChatModel interface {
 	) (*schema.StreamReader[*schema.Message], error)
 }
 
+// ToolPlanner 决定当前问题是否应当调用工具。
+//
+// 工具绑定由 Factory 在构建 Runtime 时完成，Graph 只消费已绑定工具的模型：
+// 工具集随会话绑定的客户变化，让 Graph 感知绑定过程会把作用域决策泄漏进
+// 编排层。planner 为 nil 时跳过规划，直接走知识检索。
+type ToolPlanner interface {
+	Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error)
+}
+
+// ToolInvoker 按名称执行白名单内的工具。
+type ToolInvoker interface {
+	Invoke(ctx context.Context, name string, argumentsInJSON string) (string, error)
+	Empty() bool
+}
+
 // Failure 是跨 Agent 边界返回的稳定错误，不暴露问题、知识内容或供应商响应。
 type Failure struct {
 	Code         string
@@ -200,6 +227,9 @@ func retryAllowed(err error) bool {
 type dependencies struct {
 	retriever einoretriever.Retriever
 	chatModel ChatModel
+	planner   ToolPlanner
+	tools     ToolInvoker
+	dataOwner string
 	config    Config
 }
 
@@ -212,6 +242,15 @@ type runState struct {
 	citations  []Citation
 	nextAction NextAction
 	nodePath   []string
+	toolCall   *plannedToolCall
+	toolCalls  []ToolCall
+	toolResult string
+}
+
+// plannedToolCall 是规划节点选出的待执行工具调用。
+type plannedToolCall struct {
+	name      string
+	arguments string
 }
 
 // source 同时保存可持久化证据和进入 Prompt 的原始内容。
@@ -230,6 +269,7 @@ func (state runState) output() Output {
 		Answer:     state.answer,
 		Assessment: state.assessment,
 		Citations:  citations,
+		ToolCalls:  append([]ToolCall(nil), state.toolCalls...),
 		NextAction: state.nextAction,
 		NodePath:   append([]string(nil), state.nodePath...),
 		Trace:      []TraceStep{},
