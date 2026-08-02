@@ -366,9 +366,12 @@ type StartRunResult struct {
 
 // RunSource 是 Worker 执行 Graph 所需的持久化快照。
 type RunSource struct {
-	Run             AgentRun
-	Message         Message
+	Run     AgentRun
+	Message Message
+	// KnowledgeBaseID 与 CustomerID 是 Agent 执行时的授权作用域：
+	// 前者限定可检索的知识，后者限定工具可读取的客户数据。
 	KnowledgeBaseID string
+	CustomerID      string
 	Conversation    ConversationStatus
 }
 
@@ -384,6 +387,9 @@ func (source RunSource) Validate() error {
 		source.Run.ConversationID != source.Message.ConversationID ||
 		source.Run.SourceMessageID != source.Message.ID {
 		return errors.New("run source relationships are inconsistent")
+	}
+	if err := validateID("customer ID", source.CustomerID); err != nil {
+		return fmt.Errorf("invalid run source customer: %w", err)
 	}
 	if err := validateID("knowledge base ID", source.KnowledgeBaseID); err != nil {
 		return err

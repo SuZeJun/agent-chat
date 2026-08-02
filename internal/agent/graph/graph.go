@@ -34,15 +34,20 @@ type RuntimeOption func(*dependencies)
 
 // WithTools 启用工具规划分支。
 //
-// 两者必须同时提供：只有 planner 而无注册表则无法执行工具，只有注册表而无
-// planner 则无人选择工具。任一缺失时静默降级为纯知识链路。
-func WithTools(planner ToolPlanner, tools ToolInvoker) RuntimeOption {
+// planner 与 tools 必须同时提供：只有 planner 而无注册表则无法执行工具，只有
+// 注册表而无 planner 则无人选择工具。任一缺失时静默降级为纯知识链路。
+//
+// dataOwner 是工具数据的归属客户，会随工具结果一起进入 Prompt：工具永远只返回
+// 该客户的数据，但问题里可能提到别的客户名，不标明归属会让模型把当前客户的数据
+// 冠以他人身份陈述。
+func WithTools(planner ToolPlanner, tools ToolInvoker, dataOwner string) RuntimeOption {
 	return func(deps *dependencies) {
 		if planner == nil || tools == nil {
 			return
 		}
 		deps.planner = planner
 		deps.tools = tools
+		deps.dataOwner = dataOwner
 	}
 }
 

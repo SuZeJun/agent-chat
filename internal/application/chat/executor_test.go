@@ -86,15 +86,18 @@ type fakeRuntimeFactory struct {
 	runner          agentgraph.Runner
 	err             error
 	knowledgeBaseID string
+	customerID      string
 	calls           int
 }
 
 func (factory *fakeRuntimeFactory) Build(
 	_ context.Context,
 	knowledgeBaseID string,
+	customerID string,
 ) (agentgraph.Runner, error) {
 	factory.calls++
 	factory.knowledgeBaseID = knowledgeBaseID
+	factory.customerID = customerID
 	return factory.runner, factory.err
 }
 
@@ -158,9 +161,17 @@ func TestExecuteRunCompletesGraphResultAndEvents(t *testing.T) {
 		repository.beginCommand.Event.Payload["attempt"] != 1 {
 		t.Fatalf("unexpected begin command: %#v", repository.beginCommand)
 	}
+	// 两个作用域都必须来自持久化的会话关系，而不是请求或模型输出：
+	// 前者限定可检索的知识，后者限定工具可读取的客户数据。
 	if factory.knowledgeBaseID != "base-1" ||
+		factory.customerID != "customer-1" ||
 		runner.input.Query != "如何重置密码？" {
-		t.Fatalf("unexpected Graph input: factory=%s input=%#v", factory.knowledgeBaseID, runner.input)
+		t.Fatalf(
+			"unexpected Graph scope: kb=%s customer=%s input=%#v",
+			factory.knowledgeBaseID,
+			factory.customerID,
+			runner.input,
+		)
 	}
 	command := repository.completeCommand
 	if command.RunID != "run-1" ||
@@ -431,6 +442,7 @@ func testRunSource(status domain.RunStatus, now time.Time) domain.RunSource {
 			CreatedAt:       now.Add(-time.Minute),
 		},
 		KnowledgeBaseID: "base-1",
+		CustomerID:      "customer-1",
 		Conversation:    domain.ConversationStatusAIActive,
 	}
 }

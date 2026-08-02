@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"time"
 
 	agentgraph "agent-chat/internal/agent/graph"
 	chatapplication "agent-chat/internal/application/chat"
@@ -11,6 +12,7 @@ import (
 	"agent-chat/internal/application/knowledgeretrieve"
 	chatdomain "agent-chat/internal/domain/chat"
 	knowledgedomain "agent-chat/internal/domain/knowledge"
+	crmmock "agent-chat/internal/infrastructure/crm"
 	"agent-chat/internal/infrastructure/jobs"
 	"agent-chat/internal/infrastructure/model"
 	chatpg "agent-chat/internal/infrastructure/persistence/chat"
@@ -66,10 +68,14 @@ func RunWorker(ctx context.Context, output io.Writer) error {
 		if err != nil {
 			return err
 		}
+		// 演示阶段的 CRM 是内存实现：订阅数据属于外部系统，用表模拟会让人误以为
+		// 它是本服务的权威数据。
+		subscriptionReader := crmmock.NewReader(time.Now().UTC())
 		graphFactory, err := agentgraph.NewFactory(
 			retrievalService,
 			chatModel,
 			agentgraph.DefaultFactoryConfig(),
+			agentgraph.WithSubscriptionTool(chatModel, subscriptionReader),
 		)
 		if err != nil {
 			return err

@@ -229,6 +229,7 @@ type dependencies struct {
 	chatModel ChatModel
 	planner   ToolPlanner
 	tools     ToolInvoker
+	dataOwner string
 	config    Config
 }
 

@@ -113,6 +113,11 @@ func TestRuntimeRoutesToToolWhenPlannerSelectsIt(t *testing.T) {
 		!strings.Contains(prompt, "683") {
 		t.Fatalf("tool result did not reach the prompt as data: %q", prompt)
 	}
+	// 数据归属必须随结果一起进入 Prompt。真机验证中，缺少该标注会让模型把当前
+	// 客户的数据冠以问题中提到的其他客户身份陈述——数据未泄露，结论却是错的。
+	if !strings.Contains(prompt, `"accountDataBelongsTo":"customer-1"`) {
+		t.Fatalf("tool result reached the prompt without its owner: %q", prompt)
+	}
 }
 
 // TestRuntimeFallsBackToKnowledgeWhenPlannerSelectsNoTool 保证规划节点不选工具时
@@ -263,9 +268,9 @@ func newTestRuntimeWithTools(
 	t.Helper()
 	var options []RuntimeOption
 	if tools == nil {
-		options = append(options, WithTools(planner, nil))
+		options = append(options, WithTools(planner, nil, "customer-1"))
 	} else {
-		options = append(options, WithTools(planner, tools))
+		options = append(options, WithTools(planner, tools, "customer-1"))
 	}
 	runtime, err := NewRuntime(
 		context.Background(),
