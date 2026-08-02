@@ -118,6 +118,10 @@ func TestRunExecutionLifecycleAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load run Trace: %v", err)
 	}
+	// 问题文本必须随 Trace 返回：脱离问题无法判断检索命中是否合理。
+	if trace.Question != "如何重置密码？" {
+		t.Fatalf("trace did not carry the customer question: %#v", trace.Question)
+	}
 	if trace.RequestID != "request-execution" ||
 		trace.ConversationID != "conversation-execution" ||
 		len(trace.Steps) != 1 ||

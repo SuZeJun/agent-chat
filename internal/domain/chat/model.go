@@ -431,13 +431,15 @@ type RunTraceSnapshot struct {
 	RunID          string
 	RequestID      string
 	ConversationID string
-	Status         RunStatus
-	Result         map[string]any
-	ErrorCode      string
-	Steps          []RunStep
-	CreatedAt      time.Time
-	StartedAt      *time.Time
-	CompletedAt    *time.Time
+	// Question 是触发本次 Run 的客户问题；脱离问题无法判断检索命中是否合理。
+	Question    string
+	Status      RunStatus
+	Result      map[string]any
+	ErrorCode   string
+	Steps       []RunStep
+	CreatedAt   time.Time
+	StartedAt   *time.Time
+	CompletedAt *time.Time
 }
 
 // Validate 校验 Trace 不包含负耗时、负 Token 或不完整节点身份。

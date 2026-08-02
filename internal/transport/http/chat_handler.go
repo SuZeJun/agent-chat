@@ -85,6 +85,7 @@ type runTraceResponse struct {
 	RunID          string                 `json:"runId"`
 	RequestID      string                 `json:"requestId"`
 	ConversationID string                 `json:"conversationId"`
+	Question       string                 `json:"question"`
 	Status         string                 `json:"status"`
 	Result         map[string]any         `json:"result"`
 	ErrorCode      string                 `json:"errorCode,omitempty"`
@@ -317,6 +318,7 @@ func getRunTraceHandler(service RunTraceReader) gin.HandlerFunc {
 			RunID:          trace.RunID,
 			RequestID:      trace.RequestID,
 			ConversationID: trace.ConversationID,
+			Question:       trace.Question,
 			Status:         string(trace.Status),
 			Result:         trace.Result,
 			ErrorCode:      trace.ErrorCode,

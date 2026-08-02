@@ -1,1 +1,13 @@
+# 源码统一以 LF 检出。
+#
+# Windows 上 core.autocrlf 会把工作区改写成 CRLF，导致 gofmt 认为每个文件都需要
+# 重新格式化，本地格式检查因此永远失败、也就永远不被信任——真正的格式问题只能
+# 等 CI 才暴露。强制 LF 后本地与 CI 的 gofmt 结果一致。
+*.go text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.py text eol=lf
 migrations/*.sql text eol=lf
