@@ -14,6 +14,9 @@ import (
 
 const (
 	nodeValidateInput     = "validate_input"
+	nodePlanAction        = "plan_action"
+	nodeInvokeTool        = "invoke_tool"
+	nodeExplainToolResult = "explain_tool_result"
 	nodeRetrieveKnowledge = "retrieve_knowledge"
 	nodeAnswerabilityGate = "answerability_gate"
 	nodeGroundedGenerate  = "grounded_generate"
@@ -26,12 +29,32 @@ type Runtime struct {
 	runnable compose.Runnable[Input, Output]
 }
 
+// RuntimeOption 配置 Runtime 的可选能力。
+type RuntimeOption func(*dependencies)
+
+// WithTools 启用工具规划分支。
+//
+// 两者必须同时提供：只有 planner 而无注册表则无法执行工具，只有注册表而无
+// planner 则无人选择工具。任一缺失时静默降级为纯知识链路。
+func WithTools(planner ToolPlanner, tools ToolInvoker) RuntimeOption {
+	return func(deps *dependencies) {
+		if planner == nil || tools == nil {
+			return
+		}
+		deps.planner = planner
+		deps.tools = tools
+	}
+}
+
 // NewRuntime 创建检索、Answerability 和三路响应节点组成的 Eino Graph。
+//
+// 未提供工具时保留纯知识链路的行为：规划节点直接放行，不产生额外模型调用。
 func NewRuntime(
 	ctx context.Context,
 	retriever einoretriever.Retriever,
 	chatModel ChatModel,
 	config Config,
+	options ...RuntimeOption,
 ) (*Runtime, error) {
 	if retriever == nil {
 		return nil, errors.New("RAG retriever is required")
@@ -47,6 +70,9 @@ func NewRuntime(
 		chatModel: chatModel,
 		config:    config,
 	}
+	for _, option := range options {
+		option(&deps)
+	}
 
 	graph := compose.NewGraph[Input, Output]()
 	if err := graph.AddLambdaNode(
@@ -55,6 +81,27 @@ func NewRuntime(
 		compose.WithNodeName(nodeValidateInput),
 	); err != nil {
 		return nil, fmt.Errorf("add validate input node: %w", err)
+	}
+	if err := graph.AddLambdaNode(
+		nodePlanAction,
+		compose.InvokableLambda(deps.planAction),
+		compose.WithNodeName(nodePlanAction),
+	); err != nil {
+		return nil, fmt.Errorf("add plan action node: %w", err)
+	}
+	if err := graph.AddLambdaNode(
+		nodeInvokeTool,
+		compose.InvokableLambda(deps.invokeTool),
+		compose.WithNodeName(nodeInvokeTool),
+	); err != nil {
+		return nil, fmt.Errorf("add invoke tool node: %w", err)
+	}
+	if err := graph.AddLambdaNode(
+		nodeExplainToolResult,
+		compose.InvokableLambda(deps.explainToolResult),
+		compose.WithNodeName(nodeExplainToolResult),
+	); err != nil {
+		return nil, fmt.Errorf("add explain tool result node: %w", err)
 	}
 	if err := graph.AddLambdaNode(
 		nodeRetrieveKnowledge,
@@ -94,8 +141,10 @@ func NewRuntime(
 
 	for _, edge := range [][2]string{
 		{compose.START, nodeValidateInput},
-		{nodeValidateInput, nodeRetrieveKnowledge},
+		{nodeValidateInput, nodePlanAction},
+		{nodeInvokeTool, nodeExplainToolResult},
 		{nodeRetrieveKnowledge, nodeAnswerabilityGate},
+		{nodeExplainToolResult, compose.END},
 		{nodeGroundedGenerate, compose.END},
 		{nodeAskClarification, compose.END},
 		{nodeRefuseAnswer, compose.END},
@@ -103,6 +152,16 @@ func NewRuntime(
 		if err := graph.AddEdge(edge[0], edge[1]); err != nil {
 			return nil, fmt.Errorf("add graph edge %s -> %s: %w", edge[0], edge[1], err)
 		}
+	}
+	actionBranch := compose.NewGraphBranch(
+		routeAction,
+		map[string]bool{
+			nodeInvokeTool:        true,
+			nodeRetrieveKnowledge: true,
+		},
+	)
+	if err := graph.AddBranch(nodePlanAction, actionBranch); err != nil {
+		return nil, fmt.Errorf("add action branch: %w", err)
 	}
 	branch := compose.NewGraphBranch(
 		routeAnswerability,

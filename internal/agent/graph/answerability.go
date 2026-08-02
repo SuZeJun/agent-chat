@@ -6,6 +6,9 @@ const (
 	reasonKnowledgeSupportSufficient   = "knowledge_support_sufficient"
 	reasonKnowledgeSupportAmbiguous    = "knowledge_support_ambiguous"
 	reasonKnowledgeSupportInsufficient = "knowledge_support_insufficient"
+	// 工具路径的判定原因：依据来自账户数据而非知识库检索。
+	reasonToolResultSufficient = "tool_result_sufficient"
+	reasonToolExecutionFailed  = "tool_execution_failed"
 	reasonNoRelevantKnowledge          = "no_relevant_knowledge"
 )
 
