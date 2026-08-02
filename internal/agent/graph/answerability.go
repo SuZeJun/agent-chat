@@ -9,7 +9,7 @@ const (
 	// 工具路径的判定原因：依据来自账户数据而非知识库检索。
 	reasonToolResultSufficient = "tool_result_sufficient"
 	reasonToolExecutionFailed  = "tool_execution_failed"
-	reasonNoRelevantKnowledge          = "no_relevant_knowledge"
+	reasonNoRelevantKnowledge  = "no_relevant_knowledge"
 )
 
 // assessAnswerability 只依据服务端检索分数做确定性判断，不接受模型自报置信度。
