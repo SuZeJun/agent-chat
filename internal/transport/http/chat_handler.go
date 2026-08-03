@@ -34,6 +34,14 @@ type MessageSender interface {
 	SendMessage(context.Context, application.Request) (application.Result, error)
 }
 
+// MessageHistoryReader 定义客户历史消息 Handler 依赖的分页用例。
+type MessageHistoryReader interface {
+	ReadMessageHistory(
+		context.Context,
+		application.MessageHistoryRequest,
+	) (domain.MessageHistoryPage, error)
+}
+
 // RunEventReader 定义 SSE Handler 依赖的增量事件用例。
 type RunEventReader interface {
 	ReadEvents(context.Context, application.EventRequest) (domain.RunEventPage, error)
@@ -68,6 +76,22 @@ type sendMessageResponse struct {
 	RunID     string `json:"runId"`
 	RunStatus string `json:"runStatus"`
 	Duplicate bool   `json:"duplicate"`
+}
+
+type messageHistoryResponse struct {
+	Items               []messageHistoryItemResponse `json:"items"`
+	NextBeforeMessageID string                       `json:"nextBeforeMessageId,omitempty"`
+}
+
+type messageHistoryItemResponse struct {
+	ID        string         `json:"id"`
+	Role      string         `json:"role"`
+	Content   string         `json:"content"`
+	RunID     string         `json:"runId,omitempty"`
+	RunStatus string         `json:"runStatus,omitempty"`
+	Result    map[string]any `json:"result,omitempty"`
+	ErrorCode string         `json:"errorCode,omitempty"`
+	CreatedAt string         `json:"createdAt"`
 }
 
 // runEventResponse 是 SSE data 字段中的可去重事件结构。
@@ -115,6 +139,7 @@ func registerChatRoutes(
 	router *gin.Engine,
 	conversationCreator ConversationCreator,
 	messageSender MessageSender,
+	historyReader MessageHistoryReader,
 	eventReader RunEventReader,
 ) {
 	api := router.Group("/api/v1")
@@ -127,9 +152,84 @@ func registerChatRoutes(
 			sendMessageHandler(messageSender),
 		)
 	}
+	if historyReader != nil {
+		api.GET(
+			"/conversations/:conversationId/messages",
+			getMessageHistoryHandler(historyReader),
+		)
+	}
 	if eventReader != nil {
 		api.GET("/agent-runs/:runId/events", streamRunEventsHandler(eventReader))
 	}
+}
+
+func getMessageHistoryHandler(service MessageHistoryReader) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		customerID, ok := requireHeaderIdentity(
+			ctx,
+			customerIDHeader,
+			"customer_auth_required",
+		)
+		if !ok {
+			return
+		}
+		limit := 0
+		if rawLimit := strings.TrimSpace(ctx.Query("limit")); rawLimit != "" {
+			parsed, err := strconv.Atoi(rawLimit)
+			if err != nil || parsed <= 0 {
+				writeAPIError(ctx, http.StatusBadRequest, "invalid_message_history_request", "history limit is invalid")
+				return
+			}
+			limit = parsed
+		}
+		page, err := service.ReadMessageHistory(
+			ctx.Request.Context(),
+			application.MessageHistoryRequest{
+				CustomerID:      customerID,
+				ConversationID:  ctx.Param("conversationId"),
+				BeforeMessageID: ctx.Query("before"),
+				Limit:           limit,
+			},
+		)
+		if err != nil {
+			writeChatError(ctx, err)
+			return
+		}
+		items := make([]messageHistoryItemResponse, len(page.Items))
+		for index, item := range page.Items {
+			items[index] = messageHistoryItemResponse{
+				ID:        item.Message.ID,
+				Role:      string(item.Message.Role),
+				Content:   item.Message.Content,
+				RunID:     item.RunID,
+				RunStatus: string(item.RunStatus),
+				Result:    publicMessageHistoryResult(item.RunResult),
+				ErrorCode: item.RunErrorCode,
+				CreatedAt: item.Message.CreatedAt.UTC().Format(time.RFC3339Nano),
+			}
+		}
+		ctx.JSON(http.StatusOK, messageHistoryResponse{
+			Items:               items,
+			NextBeforeMessageID: page.NextBeforeMessageID,
+		})
+	}
+}
+
+// publicMessageHistoryResult 只暴露客户恢复界面所需字段，不返回节点路径、工具原始结果等内部 Trace。
+func publicMessageHistoryResult(result map[string]any) map[string]any {
+	if len(result) == 0 {
+		return nil
+	}
+	public := make(map[string]any, 3)
+	for _, field := range []string{"assessment", "citations", "nextAction"} {
+		if value, exists := result[field]; exists {
+			public[field] = value
+		}
+	}
+	if len(public) == 0 {
+		return nil
+	}
+	return public
 }
 
 // registerRunTraceRoute 单独注册管理员 Trace，避免与客户资源权限混淆。
@@ -390,6 +490,7 @@ func writeChatError(ctx *gin.Context, err error) {
 	switch failure.Code {
 	case "invalid_create_conversation",
 		"invalid_send_message",
+		"invalid_message_history_request",
 		"invalid_run_event_request",
 		"invalid_run_trace_request":
 		writeAPIError(ctx, http.StatusBadRequest, failure.Code, "chat request is invalid")

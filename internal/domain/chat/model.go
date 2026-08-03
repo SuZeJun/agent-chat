@@ -383,6 +383,9 @@ type StartRunResult struct {
 type RunSource struct {
 	Run     AgentRun
 	Message Message
+	// History 是来源消息之前、按时间升序排列的有限会话快照。
+	// Repository 只读取服务端绑定的同一会话，Graph 不接受客户端直接提供历史。
+	History []Message
 	// KnowledgeBaseID 与 CustomerID 是 Agent 执行时的授权作用域：
 	// 前者限定可检索的知识，后者限定工具可读取的客户数据。
 	KnowledgeBaseID string
@@ -411,6 +414,29 @@ func (source RunSource) Validate() error {
 	}
 	if !source.Conversation.Valid() {
 		return fmt.Errorf("invalid run source conversation status %q", source.Conversation)
+	}
+	seen := make(map[string]struct{}, len(source.History))
+	for index, message := range source.History {
+		if err := message.Validate(); err != nil {
+			return fmt.Errorf("invalid run source history: %w", err)
+		}
+		if message.ConversationID != source.Run.ConversationID ||
+			message.ID == source.Message.ID ||
+			message.CreatedAt.After(source.Message.CreatedAt) ||
+			(message.CreatedAt.Equal(source.Message.CreatedAt) && message.ID >= source.Message.ID) {
+			return errors.New("run source history relationships are inconsistent")
+		}
+		if index > 0 {
+			previous := source.History[index-1]
+			if message.CreatedAt.Before(previous.CreatedAt) ||
+				(message.CreatedAt.Equal(previous.CreatedAt) && message.ID <= previous.ID) {
+				return errors.New("run source history must be ordered")
+			}
+		}
+		if _, exists := seen[message.ID]; exists {
+			return errors.New("run source history contains duplicate messages")
+		}
+		seen[message.ID] = struct{}{}
 	}
 	return nil
 }
@@ -505,9 +531,10 @@ func (event EventDraft) Validate() error {
 
 // BeginRunAttempt 是开始一次 Job 尝试的原子状态转换。
 type BeginRunAttempt struct {
-	RunID   string
-	Attempt int
-	Event   EventDraft
+	RunID        string
+	Attempt      int
+	HistoryLimit int
+	Event        EventDraft
 }
 
 // Validate 校验开始事件和尝试次数。
@@ -517,6 +544,9 @@ func (command BeginRunAttempt) Validate() error {
 	}
 	if command.Attempt <= 0 {
 		return errors.New("agent run attempt must be greater than zero")
+	}
+	if command.HistoryLimit < 0 || command.HistoryLimit > 50 {
+		return errors.New("agent run history limit must be between 0 and 50")
 	}
 	if err := command.Event.Validate(); err != nil {
 		return err

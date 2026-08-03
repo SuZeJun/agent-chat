@@ -40,7 +40,9 @@ Answerability Eval Case 位于 `internal/agent/graph/testdata/answerability_case
 Graph 测试同时验证非回答分支不调用模型、引用只来自回答显式标注的合法来源，以及检索内容始终作为不可信 JSON 数据进入 Prompt。
 
 工单草稿待确认 Eval Case 位于 `internal/agent/graph/testdata/ticket_approval_cases.json`，
-由 `tools_test.go` 验证结构化草稿、固定待确认路由和该分支不调用回答模型。
+由 `tools_test.go` 验证结构化草稿、固定待确认路由和该分支不调用回答模型。其中包含
+“多轮排障后只说帮我建个工单”的 Case，并断言服务端历史完整进入规划 Prompt；另有预算测试
+锁定只保留最近消息的裁剪策略。
 `factory_test.go` 直接读取生产 Runtime 使用的工具注册入口，防止只在替身注册表中注册 `draft_ticket`。
 
 RAG MVP 发布门槛位于 `evals/cases/rag_mvp.json`。pytest 会启动 `cmd/rag-eval`，

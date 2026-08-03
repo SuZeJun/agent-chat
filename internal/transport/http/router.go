@@ -24,6 +24,7 @@ type RouterOptions struct {
 	FAQImport           FAQImportService
 	Conversation        ConversationCreator
 	Message             MessageSender
+	MessageHistory      MessageHistoryReader
 	RunEvents           RunEventReader
 	RunTrace            RunTraceReader
 	TicketApproval      TicketApprover
@@ -66,6 +67,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		router,
 		options.Conversation,
 		options.Message,
+		options.MessageHistory,
 		options.RunEvents,
 	)
 	registerRunTraceRoute(router, options.RunTrace)

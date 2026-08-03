@@ -27,6 +27,8 @@ const (
 	defaultClarificationScoreThreshold = 0.55
 	defaultMaxContextDocuments         = 5
 	defaultMaxContextRunes             = 8000
+	defaultMaxHistoryMessages          = 12
+	defaultMaxHistoryRunes             = 6000
 )
 
 // Decision 表示 Answerability Gate 的确定性路由结果。
@@ -53,9 +55,19 @@ const (
 	NextActionConfirmTicket NextAction = "confirm_ticket"
 )
 
-// Input 是 RAG Graph 的最小输入。
+// HistoryTurn 是由服务端从持久化会话读取的历史消息。
+//
+// Role 只用于标注数据来源，不会转换为新的 System Prompt；历史整体以不可信 JSON
+// 交给规划节点，避免历史内容覆盖工具权限和业务策略。
+type HistoryTurn struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// Input 是 RAG Graph 的输入；History 不接受客户端直接构造。
 type Input struct {
-	Query string `json:"query"`
+	Query   string        `json:"query"`
+	History []HistoryTurn `json:"history,omitempty"`
 }
 
 // Evidence 是 Answerability 决策实际检查的知识证据。
@@ -132,6 +144,8 @@ type Config struct {
 	ClarificationScoreThreshold float64
 	MaxContextDocuments         int
 	MaxContextRunes             int
+	MaxHistoryMessages          int
+	MaxHistoryRunes             int
 }
 
 // DefaultConfig 返回首版 RAG Graph 的保守默认配置。
@@ -141,6 +155,8 @@ func DefaultConfig() Config {
 		ClarificationScoreThreshold: defaultClarificationScoreThreshold,
 		MaxContextDocuments:         defaultMaxContextDocuments,
 		MaxContextRunes:             defaultMaxContextRunes,
+		MaxHistoryMessages:          defaultMaxHistoryMessages,
+		MaxHistoryRunes:             defaultMaxHistoryRunes,
 	}
 }
 
@@ -157,6 +173,12 @@ func (config Config) validate() error {
 	}
 	if config.MaxContextRunes <= 0 || config.MaxContextRunes > 100_000 {
 		return errors.New("max context runes must be between 1 and 100000")
+	}
+	if config.MaxHistoryMessages <= 0 || config.MaxHistoryMessages > 50 {
+		return errors.New("max history messages must be between 1 and 50")
+	}
+	if config.MaxHistoryRunes <= 0 || config.MaxHistoryRunes > 32_000 {
+		return errors.New("max history runes must be between 1 and 32000")
 	}
 	return nil
 }
@@ -245,6 +267,7 @@ type dependencies struct {
 // runState 是单次 Graph 执行期间在节点间传递的内部状态。
 type runState struct {
 	query       string
+	history     []HistoryTurn
 	sources     []source
 	assessment  Assessment
 	answer      string
@@ -297,4 +320,51 @@ func normalizeQuery(query string) (string, error) {
 		return "", errors.New("query exceeds 8000 characters")
 	}
 	return query, nil
+}
+
+func normalizeHistory(
+	history []HistoryTurn,
+	maxMessages int,
+	maxRunes int,
+) ([]HistoryTurn, error) {
+	if len(history) == 0 {
+		return []HistoryTurn{}, nil
+	}
+	if maxMessages <= 0 || maxRunes <= 0 {
+		return nil, errors.New("history budgets must be positive")
+	}
+	normalized := make([]HistoryTurn, len(history))
+	for index, turn := range history {
+		turn.Role = strings.TrimSpace(turn.Role)
+		turn.Content = strings.TrimSpace(turn.Content)
+		switch turn.Role {
+		case "customer", "assistant", "agent", "system":
+		default:
+			return nil, errors.New("history role is invalid")
+		}
+		if turn.Content == "" {
+			return nil, errors.New("history content must not be blank")
+		}
+		normalized[index] = turn
+	}
+	start := 0
+	if len(normalized) > maxMessages {
+		start = len(normalized) - maxMessages
+	}
+	selected := make([]HistoryTurn, 0, len(normalized)-start)
+	remaining := maxRunes
+	for index := len(normalized) - 1; index >= start && remaining > 0; index-- {
+		turn := normalized[index]
+		runes := []rune(turn.Content)
+		if len(runes) > remaining {
+			turn.Content = string(runes[:remaining])
+			runes = runes[:remaining]
+		}
+		selected = append(selected, turn)
+		remaining -= len(runes)
+	}
+	for left, right := 0, len(selected)-1; left < right; left, right = left+1, right-1 {
+		selected[left], selected[right] = selected[right], selected[left]
+	}
+	return selected, nil
 }

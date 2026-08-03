@@ -12,6 +12,11 @@ const RUN_EVENT_TYPES: RunEventType[] = [
   "answerability.decided",
   "message.delta",
   "message.citation",
+  "approval.required",
+  "approval.confirmed",
+  "approval.cancelled",
+  "approval.expired",
+  "ticket.created",
   "run.completed",
   "run.failed",
 ];

@@ -36,6 +36,20 @@ type fakeMessageSender struct {
 	err     error
 }
 
+type fakeMessageHistoryReader struct {
+	request application.MessageHistoryRequest
+	page    domain.MessageHistoryPage
+	err     error
+}
+
+func (reader *fakeMessageHistoryReader) ReadMessageHistory(
+	_ context.Context,
+	request application.MessageHistoryRequest,
+) (domain.MessageHistoryPage, error) {
+	reader.request = request
+	return reader.page, reader.err
+}
+
 func (sender *fakeMessageSender) SendMessage(
 	_ context.Context,
 	request application.Request,
@@ -140,6 +154,84 @@ func TestSendMessageAPI(t *testing.T) {
 	}
 	if payload.RunID != "run_1" || payload.RunStatus != "pending" {
 		t.Fatalf("unexpected response: %#v", payload)
+	}
+}
+
+func TestGetMessageHistoryAPIUsesCustomerScopeAndReturnsRunResult(t *testing.T) {
+	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
+	reader := &fakeMessageHistoryReader{page: domain.MessageHistoryPage{
+		Items: []domain.MessageHistoryItem{
+			{
+				Message: domain.Message{
+					ID:             "message-assistant",
+					ConversationID: "conversation-1",
+					AgentRunID:     "run-1",
+					Role:           domain.MessageRoleAssistant,
+					Content:        "请在设置页面重置密码。[S1]",
+					CreatedAt:      now,
+				},
+				RunID:     "run-1",
+				RunStatus: domain.RunStatusCompleted,
+				RunResult: map[string]any{
+					"assessment": map[string]any{"decision": "answerable"},
+					"citations":  []any{map[string]any{"sourceId": "S1"}},
+					"nodePath":   []any{"validate_input", "grounded_generate"},
+				},
+			},
+		},
+		NextBeforeMessageID: "message-cursor",
+	}}
+	router := newChatHistoryTestRouter(reader)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/conversations/conversation-1/messages?before=message-2&limit=20",
+		nil,
+	)
+	request.Header.Set(customerIDHeader, "customer-1")
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", response.Code, response.Body.String())
+	}
+	if reader.request.CustomerID != "customer-1" ||
+		reader.request.ConversationID != "conversation-1" ||
+		reader.request.BeforeMessageID != "message-2" ||
+		reader.request.Limit != 20 {
+		t.Fatalf("unexpected history request: %#v", reader.request)
+	}
+	var payload messageHistoryResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Items) != 1 ||
+		payload.Items[0].RunID != "run-1" ||
+		payload.Items[0].Result["assessment"] == nil ||
+		payload.Items[0].Result["nodePath"] != nil ||
+		payload.NextBeforeMessageID != "message-cursor" {
+		t.Fatalf("unexpected history response: %#v", payload)
+	}
+}
+
+func TestGetMessageHistoryAPIRejectsInvalidLimitBeforeUseCase(t *testing.T) {
+	reader := &fakeMessageHistoryReader{}
+	router := newChatHistoryTestRouter(reader)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/conversations/conversation-1/messages?limit=0",
+		nil,
+	)
+	request.Header.Set(customerIDHeader, "customer-1")
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d body=%s", response.Code, response.Body.String())
+	}
+	if reader.request.ConversationID != "" {
+		t.Fatalf("use case was called with invalid limit: %#v", reader.request)
 	}
 }
 
@@ -299,6 +391,16 @@ func newChatTestRouter(
 	if !ok {
 		panic("test router is not a Gin engine")
 	}
-	registerChatRoutes(engine, conversationCreator, messageSender, eventReader)
+	registerChatRoutes(engine, conversationCreator, messageSender, nil, eventReader)
+	return engine
+}
+
+func newChatHistoryTestRouter(historyReader MessageHistoryReader) http.Handler {
+	router := newKnowledgeTestRouter(nil, nil)
+	engine, ok := router.(*gin.Engine)
+	if !ok {
+		panic("test router is not a Gin engine")
+	}
+	registerChatRoutes(engine, nil, nil, historyReader, nil)
 	return engine
 }

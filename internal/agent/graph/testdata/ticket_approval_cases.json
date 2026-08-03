@@ -37,5 +37,32 @@
       "nextAction": "confirm_ticket",
       "nodePath": ["validate_input", "plan_action", "invoke_tool", "request_approval"]
     }
+  },
+  {
+    "id": "multi_turn_export_then_create_ticket",
+    "query": "帮我建个工单",
+    "history": [
+      {
+        "role": "customer",
+        "content": "账单导出按钮从今天上午开始一直没有反应，Chrome 和 Edge 都试过了。"
+      },
+      {
+        "role": "assistant",
+        "content": "请确认是否所有账单都无法导出，以及页面是否出现错误提示。"
+      },
+      {
+        "role": "customer",
+        "content": "所有账单都不行，没有错误提示，这是财务月结，现在很紧急。"
+      }
+    ],
+    "draft": {
+      "title": "账单导出按钮无响应",
+      "description": "客户反馈所有账单均无法导出，Chrome 和 Edge 都已尝试，页面无错误提示，影响财务月结。",
+      "priority": "high"
+    },
+    "expected": {
+      "nextAction": "confirm_ticket",
+      "nodePath": ["validate_input", "plan_action", "invoke_tool", "request_approval"]
+    }
   }
 ]

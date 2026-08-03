@@ -235,8 +235,17 @@ func (deps dependencies) validateInput(
 	if err != nil {
 		return runState{}, newFailure("invalid_rag_input", false, err)
 	}
+	history, err := normalizeHistory(
+		input.History,
+		deps.config.MaxHistoryMessages,
+		deps.config.MaxHistoryRunes,
+	)
+	if err != nil {
+		return runState{}, newFailure("invalid_rag_input", false, err)
+	}
 	return runState{
 		query:    query,
+		history:  history,
 		nodePath: []string{nodeValidateInput},
 	}, nil
 }

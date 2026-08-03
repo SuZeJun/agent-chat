@@ -69,6 +69,10 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	historyService, err := chatapplication.NewHistoryService(chatRepository)
+	if err != nil {
+		return err
+	}
 	eventService, err := chatapplication.NewEventService(chatRepository)
 	if err != nil {
 		return err
@@ -94,6 +98,7 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 		FAQImport:           importService,
 		Conversation:        conversationService,
 		Message:             messageService,
+		MessageHistory:      historyService,
 		RunEvents:           eventService,
 		RunTrace:            traceService,
 		TicketApproval:      ticketService,

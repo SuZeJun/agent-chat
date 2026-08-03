@@ -53,6 +53,13 @@ func (repository *Repository) BeginRunAttempt(
 			domain.ErrInvalidState,
 		)
 	}
+	source.History, err = loadPlanningHistory(ctx, transaction, source, command.HistoryLimit)
+	if err != nil {
+		return domain.RunSource{}, err
+	}
+	if err := source.Validate(); err != nil {
+		return domain.RunSource{}, errors.New("begin agent run attempt: invalid history snapshot")
+	}
 
 	commandTag, err := transaction.Exec(ctx, `
 		UPDATE agent_runs

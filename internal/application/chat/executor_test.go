@@ -171,7 +171,8 @@ func TestExecuteRunCompletesGraphResultAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteRun returned error: %v", err)
 	}
-	if repository.beginCommand.Event.Type != domain.EventTypeRunStarted ||
+	if repository.beginCommand.HistoryLimit != planningHistoryMessageLimit ||
+		repository.beginCommand.Event.Type != domain.EventTypeRunStarted ||
 		repository.beginCommand.Event.Payload["attempt"] != 1 {
 		t.Fatalf("unexpected begin command: %#v", repository.beginCommand)
 	}
@@ -179,7 +180,10 @@ func TestExecuteRunCompletesGraphResultAndEvents(t *testing.T) {
 	// 前者限定可检索的知识，后者限定工具可读取的客户数据。
 	if factory.knowledgeBaseID != "base-1" ||
 		factory.customerID != "customer-1" ||
-		runner.input.Query != "如何重置密码？" {
+		runner.input.Query != "如何重置密码？" ||
+		len(runner.input.History) != 2 ||
+		runner.input.History[0].Content != "账单导出按钮没有反应" ||
+		runner.input.History[1].Role != string(domain.MessageRoleAssistant) {
 		t.Fatalf(
 			"unexpected Graph scope: kb=%s customer=%s input=%#v",
 			factory.knowledgeBaseID,
@@ -547,6 +551,24 @@ func testRunSource(status domain.RunStatus, now time.Time) domain.RunSource {
 			Role:            domain.MessageRoleCustomer,
 			Content:         "如何重置密码？",
 			CreatedAt:       now.Add(-time.Minute),
+		},
+		History: []domain.Message{
+			{
+				ID:              "history-customer",
+				ConversationID:  "conversation-1",
+				ClientMessageID: "history-client",
+				Role:            domain.MessageRoleCustomer,
+				Content:         "账单导出按钮没有反应",
+				CreatedAt:       now.Add(-3 * time.Minute),
+			},
+			{
+				ID:             "history-assistant",
+				ConversationID: "conversation-1",
+				AgentRunID:     "history-run",
+				Role:           domain.MessageRoleAssistant,
+				Content:        "请尝试更换浏览器后重试",
+				CreatedAt:      now.Add(-2 * time.Minute),
+			},
 		},
 		KnowledgeBaseID: "base-1",
 		CustomerID:      "customer-1",

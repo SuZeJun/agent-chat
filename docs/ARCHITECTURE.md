@@ -223,8 +223,15 @@ Eino Retriever 边界：
 
 ### 5.3 Agent Graph
 
-当前代码先实现知识问答子图，即 `Retrieve -> Answerability Gate -> Generate / Clarify / Refuse`。
-意图识别、工具调用、审批和转人工节点按后续阶段接入，不为了展示框架提前放入空节点。
+当前 Graph 已实现知识问答子图 `Retrieve -> Answerability Gate -> Generate / Clarify / Refuse`，
+以及显式白名单工具的规划与工单草稿待确认分支。转人工节点按后续阶段接入，不为了展示
+框架提前放入空节点。
+
+工具规划节点会读取源消息之前、由 Repository 在同一会话内查询的最近 12 条消息。
+历史先受数据库条数上限约束，再受 Graph 的 6000 字符预算裁剪；只保留最近内容，并作为
+不可信 JSON 数据进入规划 Prompt。客户请求和模型输出都不能指定会话或客户作用域，历史
+中的文字也不能覆盖 System Prompt、工具权限或写操作确认策略。知识检索与回答生成仍只使用
+当前问题，避免在没有专门 Eval 的情况下改变 RAG 语义。
 
 ```mermaid
 flowchart TD
@@ -268,8 +275,8 @@ Worker 负责真正执行 Agent Graph，避免裸 goroutine 在服务重启时�
 `agent.run` 的单次尝试按以下顺序执行：
 
 1. 锁定 Run 与 Conversation，将 Run 切换为 `running` 并追加 `run.started`。
-2. 使用会话绑定的 Knowledge Base 创建隔离 RAG Runtime，客户端和模型不能覆盖资源范围。
-3. 执行检索、Answerability Gate 和受约束生成。
+2. 在同一事务内读取源消息之前的有限会话历史，并使用会话绑定的 Knowledge Base 创建隔离 RAG Runtime；客户端和模型不能覆盖资源范围。
+3. 使用历史辅助工具规划，再执行工具分支或检索、Answerability Gate 和受约束生成。
 4. 在同一事务中保存 Assistant Message、Graph Result、有序事件和 Run 终态。
 5. 可重试失败保持 Run 为 `running` 并等待 Job 重投；不可重试或耗尽次数后原子进入 `failed`。
 
@@ -397,6 +404,7 @@ pending -> running -> succeeded
 
 ```text
 POST /api/v1/conversations
+GET  /api/v1/conversations/{id}/messages?before={messageId}&limit={1..100}
 POST /api/v1/conversations/{id}/messages
 GET  /api/v1/conversations/{id}/events
 GET  /api/v1/ticket-approvals/{id}
