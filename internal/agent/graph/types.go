@@ -244,13 +244,13 @@ type dependencies struct {
 
 // runState 是单次 Graph 执行期间在节点间传递的内部状态。
 type runState struct {
-	query      string
-	sources    []source
-	assessment Assessment
-	answer     string
-	citations  []Citation
-	nextAction NextAction
-	nodePath   []string
+	query       string
+	sources     []source
+	assessment  Assessment
+	answer      string
+	citations   []Citation
+	nextAction  NextAction
+	nodePath    []string
 	toolCall    *plannedToolCall
 	toolCalls   []ToolCall
 	toolResult  string
