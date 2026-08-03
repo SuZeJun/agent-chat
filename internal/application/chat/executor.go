@@ -19,14 +19,12 @@ type RunRepository interface {
 	BeginRunAttempt(context.Context, domain.BeginRunAttempt) (domain.RunSource, error)
 	AppendRunProgress(context.Context, domain.AppendRunProgressCommand) error
 	CompleteRun(context.Context, domain.CompleteRunCommand) error
+	CompleteRunWithApproval(
+		context.Context,
+		domain.CompleteRunCommand,
+		ticketdomain.Approval,
+	) error
 	RecordRunFailure(context.Context, domain.RecordRunFailureCommand) error
-}
-
-// ApprovalRecorder 定义执行器持久化工单草稿所需的最小能力。
-//
-// 未配置时 Graph 也不会产出草稿——草稿工具与该依赖在启动时一同接入或一同缺席。
-type ApprovalRecorder interface {
-	CreateApproval(ctx context.Context, approval ticketdomain.Approval) error
 }
 
 // 待确认窗口。
@@ -56,19 +54,6 @@ type Executor struct {
 	idGenerator IDGenerator
 	clock       Clock
 	logger      *slog.Logger
-	approvals   ApprovalRecorder
-}
-
-// ExecutorOption 配置执行器的可选能力。
-type ExecutorOption func(*Executor)
-
-// WithApprovalRecorder 启用工单草稿的持久化。
-//
-// 与草稿工具成对接入：缺少其一时 Graph 不会产出草稿，执行器也就不会用到它。
-func WithApprovalRecorder(approvals ApprovalRecorder) ExecutorOption {
-	return func(executor *Executor) {
-		executor.approvals = approvals
-	}
 }
 
 // NewExecutor 创建 Agent Run 执行用例。
@@ -81,7 +66,6 @@ func NewExecutor(
 	idGenerator IDGenerator,
 	clock Clock,
 	logger *slog.Logger,
-	options ...ExecutorOption,
 ) (*Executor, error) {
 	if repository == nil {
 		return nil, errors.New("run repository is required")
@@ -104,9 +88,6 @@ func NewExecutor(
 		idGenerator: idGenerator,
 		clock:       clock,
 		logger:      logger,
-	}
-	for _, option := range options {
-		option(executor)
 	}
 	return executor, nil
 }
@@ -206,16 +187,11 @@ func (executor *Executor) ExecuteRun(
 		return executor.failAttempt(ctx, request, code, retryable, err)
 	}
 
-	// 审批记录必须在 Run 结束之前落库。
-	//
-	// 顺序不能反：若先结束 Run 再创建审批，两者之间崩溃会让客户看到"请确认"
-	// 却没有可确认的对象。反过来先创建审批，即便随后的 CompleteRun 失败重试，
-	// agent_run_id 的唯一约束也保证不会产生第二个审批。
-	if err := executor.recordApproval(ctx, source, output); err != nil {
-		return executor.failAttempt(ctx, request, "record_ticket_approval_failed", true, err)
-	}
-
 	completedAt := executor.clock.Now().UTC()
+	approval, err := executor.approvalFromOutput(source, output, completedAt)
+	if err != nil {
+		return executor.failAttempt(ctx, request, "invalid_ticket_approval", false, err)
+	}
 	result, err := graphResult(output)
 	if err != nil {
 		return executor.failAttempt(
@@ -225,6 +201,10 @@ func (executor *Executor) ExecuteRun(
 			false,
 			err,
 		)
+	}
+	if approval != nil {
+		result["approvalId"] = approval.ID
+		result["approvalExpiresAt"] = approval.ExpiresAt.Format(time.RFC3339Nano)
 	}
 	command := domain.CompleteRunCommand{
 		RunID: request.RunID,
@@ -237,11 +217,16 @@ func (executor *Executor) ExecuteRun(
 			CreatedAt:      completedAt,
 		},
 		Result:      result,
-		Events:      executor.completionEvents(messageID, output, completedAt),
+		Events:      executor.completionEvents(messageID, output, approval, completedAt),
 		Steps:       graphTraceSteps(output.Trace),
 		CompletedAt: completedAt,
 	}
-	if err := executor.repository.CompleteRun(ctx, command); err != nil {
+	if approval == nil {
+		err = executor.repository.CompleteRun(ctx, command)
+	} else {
+		err = executor.repository.CompleteRunWithApproval(ctx, command, *approval)
+	}
+	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
@@ -302,9 +287,10 @@ func graphTraceSteps(trace []agentgraph.TraceStep) []domain.RunStepDraft {
 func (executor *Executor) completionEvents(
 	messageID string,
 	output agentgraph.Output,
+	approval *ticketdomain.Approval,
 	createdAt time.Time,
 ) []domain.EventDraft {
-	events := make([]domain.EventDraft, 0, len(output.Citations)+1)
+	events := make([]domain.EventDraft, 0, len(output.Citations)+2)
 	for _, citation := range output.Citations {
 		events = append(events, domain.EventDraft{
 			ID:   executor.idGenerator.NewID("evt_"),
@@ -312,6 +298,18 @@ func (executor *Executor) completionEvents(
 			Payload: map[string]any{
 				"messageId": messageID,
 				"citation":  citation,
+			},
+			CreatedAt: createdAt,
+		})
+	}
+	if approval != nil {
+		events = append(events, domain.EventDraft{
+			ID:   executor.idGenerator.NewID("evt_"),
+			Type: domain.EventTypeApprovalRequired,
+			Payload: map[string]any{
+				"approvalId": approval.ID,
+				"draft":      approval.Draft,
+				"expiresAt":  approval.ExpiresAt.Format(time.RFC3339Nano),
 			},
 			CreatedAt: createdAt,
 		})
@@ -330,25 +328,18 @@ func (executor *Executor) completionEvents(
 	return events
 }
 
-// recordApproval 把 Graph 产出的工单草稿持久化为待确认审批。
+// approvalFromOutput 把 Graph 草稿映射为与 Run 完成同事务提交的审批。
 //
-// 幂等由 ticket_approvals.agent_run_id 的唯一约束保证：Run 重试时第二次插入被
-// 数据库拒绝，此处将其视为成功——审批已经存在，正是期望的状态。
-func (executor *Executor) recordApproval(
-	ctx context.Context,
+// 审批 ID 会同时进入 approval.required 事件和 Graph Result。Repository 必须将
+// 三者原子落库，避免客户看到无法确认的 ID，或重试时展示与执行不同的草稿。
+func (executor *Executor) approvalFromOutput(
 	source domain.RunSource,
 	output agentgraph.Output,
-) error {
+	now time.Time,
+) (*ticketdomain.Approval, error) {
 	if output.TicketDraft == nil {
-		return nil
+		return nil, nil
 	}
-	if executor.approvals == nil {
-		// Graph 产出了草稿却无处存放，说明启动接线不一致。静默丢弃会让客户
-		// 看到"请确认"而没有可确认的对象，因此必须显式失败。
-		return errors.New("ticket draft produced without an approval recorder")
-	}
-
-	now := executor.clock.Now().UTC()
 	approval := ticketdomain.Approval{
 		ID:             executor.idGenerator.NewID("apr_"),
 		ConversationID: source.Run.ConversationID,
@@ -360,12 +351,10 @@ func (executor *Executor) recordApproval(
 		CreatedAt:      now,
 		ExpiresAt:      now.Add(approvalWindow),
 	}
-	err := executor.approvals.CreateApproval(ctx, approval)
-	if errors.Is(err, ticketdomain.ErrInvalidState) {
-		// 唯一约束冲突意味着本次 Run 的审批已由此前的尝试创建。
-		return nil
+	if err := approval.Validate(); err != nil {
+		return nil, err
 	}
-	return err
+	return &approval, nil
 }
 
 // failAttempt 记录稳定错误码；仅永久错误或最后一次尝试会结束 Run。

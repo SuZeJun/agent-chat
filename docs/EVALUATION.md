@@ -39,6 +39,10 @@ Answerability Eval Case 位于 `internal/agent/graph/testdata/answerability_case
 固定问题、最强证据分数、三类路由结果和稳定原因；由 `answerability_test.go` 验证阈值边界。
 Graph 测试同时验证非回答分支不调用模型、引用只来自回答显式标注的合法来源，以及检索内容始终作为不可信 JSON 数据进入 Prompt。
 
+工单草稿待确认 Eval Case 位于 `internal/agent/graph/testdata/ticket_approval_cases.json`，
+由 `tools_test.go` 验证结构化草稿、固定待确认路由和该分支不调用回答模型。
+`factory_test.go` 直接读取生产 Runtime 使用的工具注册入口，防止只在替身注册表中注册 `draft_ticket`。
+
 RAG MVP 发布门槛位于 `evals/cases/rag_mvp.json`。pytest 会启动 `cmd/rag-eval`，
 对全部 Case 真正执行 Eino Graph，并验证三类决策、稳定原因、非回答分支不调用模型，
 以及回答分支只能返回实际来源 `S1`。Runner 同时生成机器可读 JSON 和 Markdown 报告。
@@ -205,6 +209,10 @@ MVP 后收集点赞、点踩、错误引用、转人工和客服修订结果。
 - 取消后不执行写工具。
 - 过期确认不执行写工具。
 - 重复确认不产生重复副作用。
+
+除状态机单元测试外，PostgreSQL 集成测试还必须反向验证：调用方时钟落后时数据库时间仍能
+拒绝过期审批；Run 完成后半段失败时审批随事务回滚；并发确认只创建一个 Job，Worker 重投
+只产生一张工单。
 
 ### 7.4 Tenant/Customer Isolation
 

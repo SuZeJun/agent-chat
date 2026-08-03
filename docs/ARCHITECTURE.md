@@ -128,7 +128,7 @@ Transport
 - Eino Retriever 和 Embedding 适配
 - Eino Compose Graph
 - Tool 与 MCP 适配
-- Interrupt、Checkpoint 和 Resume
+- 工具规划、草稿生成与待确认输出
 - Callback 与运行 Trace
 - Prompt 和模型配置解析
 
@@ -160,7 +160,8 @@ Agent Runtime 不拥有：
 - `Retriever`：将 pgvector 检索暴露为统一组件。
 - `compose.Graph`：编排可控的客服工作流。
 - `Tool`：定义只读查询和写操作草稿。
-- `Interrupt/Resume`：实现用户确认。
+- 用户确认首版不依赖进程内 `Interrupt/Resume` 或 Eino Checkpoint；Graph 只输出草稿，
+  Application 通过 PostgreSQL 审批状态机和二次持久化 Job 恢复执行。
 - `Callbacks`：收集节点、模型、工具和错误 Trace。
 
 首版模型 Provider 固定为：
@@ -237,8 +238,10 @@ flowchart TD
     Route -->|Subscription Query| QueryTool[Query Subscription Tool]
     QueryTool --> GenerateToolReply[Generate Tool Reply]
     Route -->|Create Ticket| Draft[Prepare Ticket Draft]
-    Draft --> Confirm[Interrupt for Confirmation]
-    Confirm -->|Confirmed| CreateTicket[Create Ticket Tool]
+    Draft --> PersistApproval[Persist Draft and Approval]
+    PersistApproval --> Confirm[Wait for Confirmation]
+    Confirm -->|Confirmed| EnqueueTicket[Enqueue ticket.create Job]
+    EnqueueTicket --> CreateTicket[Create Ticket Idempotently]
     Confirm -->|Cancelled| CancelReply[Cancel Reply]
     Route -->|Human Requested| Handoff[Prepare Handoff]
     Generate --> End([End])
@@ -307,15 +310,15 @@ pending -> running -> succeeded
 - Agent Run 对来源消息建立唯一约束。
 - Assistant Message 对 Agent Run 建立唯一约束，任务重放不会生成重复回答。
 - 同一会话内并发提交由会话行锁串行化；同一客户端消息 ID 只有内容一致时才视为重放。
-- 创建工单使用确认请求 ID 作为幂等键。
-- Resume 使用审批版本或原子状态更新防止重复消费。
+- 创建工单使用审批 ID 作为 Job 幂等键，并在 Job Payload 中持久化稳定的工单 ID 和编号。
+- 确认使用审批行锁和条件状态转换防止重复消费；Worker 重试复用同一 Payload。
 
 ### 6.4 事务
 
 以下操作必须在事务中完成：
 
 - 消息入库、会话状态更新和 Agent Job 创建。
-- 审批确认和 Resume Job 创建。
+- 审批确认、确认事件和 `ticket.create` Job 创建。
 - 转人工事件、会话状态更新和通知任务创建。
 - 文档版本创建和索引任务创建。
 
@@ -333,6 +336,11 @@ pending -> running -> succeeded
 2. 包含回答、路由与证据的 Graph Result。
 3. 连续递增的检索、Answerability、消息、引用和终态事件。
 4. Agent Run 的 `completed` 终态和会话最后活跃时间。
+
+若 Graph 生成工单草稿，同一完成事务还会写入 `pending` 审批以及
+`approval.required` 事件；任何后续写入失败都会连同审批一起回滚，避免出现孤立审批。
+确认请求只负责原子切换审批状态并创建 `ticket.create` Job，工单由 Worker 在独立事务中
+幂等创建，因此 API 或 Worker 重启不会丢失已经确认的写操作。
 
 会话的 `customer_id` 来自服务端鉴权主体，不接受模型决定；客户资料表和客户创建流程在后续身份接入阶段实现。
 
@@ -365,7 +373,7 @@ pending -> running -> succeeded
 - `agent_run_steps`
 - `retrieval_traces`
 - `tool_calls`
-- `approval_requests`
+- `ticket_approvals`
 
 ### 7.4 工单与工具
 
@@ -391,8 +399,9 @@ pending -> running -> succeeded
 POST /api/v1/conversations
 POST /api/v1/conversations/{id}/messages
 GET  /api/v1/conversations/{id}/events
-POST /api/v1/approvals/{id}/confirm
-POST /api/v1/approvals/{id}/cancel
+GET  /api/v1/ticket-approvals/{id}
+POST /api/v1/ticket-approvals/{id}/confirm
+POST /api/v1/ticket-approvals/{id}/cancel
 POST /api/v1/conversations/{id}/request-human
 ```
 
@@ -427,6 +436,10 @@ message.citation
 tool.started
 tool.completed
 approval.required
+approval.confirmed
+approval.cancelled
+approval.expired
+ticket.created
 handoff.created
 run.completed
 run.failed

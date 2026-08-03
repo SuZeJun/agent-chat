@@ -68,19 +68,17 @@ sequenceDiagram
     participant API as API
     participant E as Eino Graph
     participant DB as PostgreSQL
-    participant T as 工单服务
+    participant W as Worker
 
     U->>API: 这个问题没解决，帮我建工单
     API->>E: 启动创建工单流程
     E->>E: 汇总问题并生成工单草稿
-    E->>DB: 保存 Checkpoint 和待确认请求
+    E->>DB: 原子保存 Run 结果、草稿和待确认请求
     E-->>U: 展示标题、描述和优先级，请求确认
     U->>API: 确认
-    API->>DB: 原子更新确认状态
-    API->>E: 从 Checkpoint 恢复
-    E->>T: create_ticket(draft, idempotency_key)
-    T-->>E: ticket_no
-    E-->>U: 返回工单编号
+    API->>DB: 原子更新确认状态并创建 ticket.create Job
+    W->>DB: 领取 Job，以审批 ID 幂等创建工单
+    DB-->>U: 查询状态时返回工单编号
 ```
 
 取消路径：
@@ -171,5 +169,5 @@ human_active -> ai_active
 4. Answerability 结果和理由。
 5. 模型调用与 Token。
 6. 工具输入、输出、耗时和错误。
-7. Interrupt、Checkpoint 和 Resume。
+7. 审批请求、状态事件和持久化 Job 执行结果。
 8. 最终回答、引用与结束状态。

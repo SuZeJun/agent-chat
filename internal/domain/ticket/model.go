@@ -17,6 +17,9 @@ const (
 	maxTicketNumberChars = 32
 )
 
+// CreateJobType 是确认后创建工单的持久化 Job 类型。
+const CreateJobType = "ticket.create"
+
 var (
 	// ErrNotFound 表示授权范围内不存在该审批或工单。
 	ErrNotFound = errors.New("ticket entity not found")
@@ -57,7 +60,9 @@ func (status ApprovalStatus) Valid() bool {
 
 // Terminal 判断审批是否已进入不可再转换的状态。
 func (status ApprovalStatus) Terminal() bool {
-	return status == ApprovalStatusCancelled || status == ApprovalStatusExpired
+	return status == ApprovalStatusApproved ||
+		status == ApprovalStatusCancelled ||
+		status == ApprovalStatusExpired
 }
 
 // Priority 是工单优先级。取值受限，避免模型自由发挥出无法处理的等级。
@@ -169,6 +174,81 @@ type Ticket struct {
 	ApprovalID     string
 	Draft          Draft
 	CreatedAt      time.Time
+}
+
+// ConfirmCommand 原子确认审批并创建持久化写操作 Job。
+//
+// Ticket、Job 和事件 ID 在进入事务前生成并随 Job Payload 持久化，因此 Worker
+// 重试始终使用同一组标识和工单编号，不会因重投产生不同的外部身份。
+type ConfirmCommand struct {
+	CustomerID    string
+	ApprovalID    string
+	JobID         string
+	TicketID      string
+	TicketNumber  string
+	EventID       string
+	TicketEventID string
+	OccurredAt    time.Time
+}
+
+// Validate 校验确认命令及其稳定执行身份。
+func (command ConfirmCommand) Validate() error {
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{"customer ID", command.CustomerID},
+		{"approval ID", command.ApprovalID},
+		{"job ID", command.JobID},
+		{"ticket ID", command.TicketID},
+		{"event ID", command.EventID},
+		{"ticket event ID", command.TicketEventID},
+	} {
+		if err := validateID(field.name, field.value); err != nil {
+			return err
+		}
+	}
+	number := strings.TrimSpace(command.TicketNumber)
+	if number == "" || len(number) > maxTicketNumberChars {
+		return fmt.Errorf("ticket number must be 1-%d characters", maxTicketNumberChars)
+	}
+	if command.OccurredAt.IsZero() {
+		return errors.New("confirmation time is required")
+	}
+	return nil
+}
+
+// ExecuteCreateCommand 是 ticket.create Job 的稳定 Payload。
+type ExecuteCreateCommand struct {
+	ApprovalID   string    `json:"approval_id"`
+	TicketID     string    `json:"ticket_id"`
+	TicketNumber string    `json:"ticket_number"`
+	EventID      string    `json:"event_id"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// Validate 校验持久化 Job Payload。
+func (command ExecuteCreateCommand) Validate() error {
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{"approval ID", command.ApprovalID},
+		{"ticket ID", command.TicketID},
+		{"event ID", command.EventID},
+	} {
+		if err := validateID(field.name, field.value); err != nil {
+			return err
+		}
+	}
+	number := strings.TrimSpace(command.TicketNumber)
+	if number == "" || len(number) > maxTicketNumberChars {
+		return fmt.Errorf("ticket number must be 1-%d characters", maxTicketNumberChars)
+	}
+	if command.CreatedAt.IsZero() {
+		return errors.New("ticket creation time is required")
+	}
+	return nil
 }
 
 // Validate 校验工单记录的完整性。

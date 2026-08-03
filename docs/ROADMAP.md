@@ -75,8 +75,8 @@
 - 模拟 CRM 订阅数据
 - `query_subscription` 只读工具
 - 工单草稿生成
-- `create_ticket` 写工具
-- Eino Interrupt/Resume
+- `draft_ticket` 草稿工具与生产白名单接线
+- 持久化 Run 状态机与二次 `ticket.create` Job
 - 审批持久化和过期
 - 幂等创建工单
 - Worker 重试

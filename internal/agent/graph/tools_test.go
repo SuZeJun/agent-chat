@@ -2,7 +2,10 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -162,6 +165,69 @@ func TestRuntimeRequestsApprovalForTicketDraft(t *testing.T) {
 	}
 	if output.Assessment.Reason != reasonTicketDraftPrepared {
 		t.Fatalf("unexpected assessment: %#v", output.Assessment)
+	}
+}
+
+func TestTicketApprovalEvalCases(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join("testdata", "ticket_approval_cases.json"))
+	if err != nil {
+		t.Fatalf("read ticket approval Eval Case: %v", err)
+	}
+	var cases []struct {
+		ID       string       `json:"id"`
+		Query    string       `json:"query"`
+		Draft    ticket.Draft `json:"draft"`
+		Expected struct {
+			NextAction string   `json:"nextAction"`
+			NodePath   []string `json:"nodePath"`
+		} `json:"expected"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatalf("decode ticket approval Eval Case: %v", err)
+	}
+	if len(cases) == 0 {
+		t.Fatal("ticket approval Eval Case must not be empty")
+	}
+
+	for _, evalCase := range cases {
+		evalCase := evalCase
+		t.Run(evalCase.ID, func(t *testing.T) {
+			t.Parallel()
+
+			draftJSON, err := json.Marshal(evalCase.Draft)
+			if err != nil {
+				t.Fatalf("encode draft: %v", err)
+			}
+			planner := &fakePlanner{toolName: agenttool.DraftTicketToolName}
+			invoker := &fakeInvoker{result: string(draftJSON)}
+			chatModel := &fakeChatModel{answer: "不应被调用"}
+			runtime := newTestRuntimeWithTools(
+				t,
+				&fakeRetriever{},
+				chatModel,
+				planner,
+				invoker,
+			)
+
+			output, err := runtime.Invoke(context.Background(), Input{Query: evalCase.Query})
+			if err != nil {
+				t.Fatalf("Invoke returned error: %v", err)
+			}
+			if output.TicketDraft == nil || *output.TicketDraft != evalCase.Draft {
+				t.Fatalf("draft = %#v, want %#v", output.TicketDraft, evalCase.Draft)
+			}
+			if string(output.NextAction) != evalCase.Expected.NextAction {
+				t.Fatalf("next action = %q, want %q", output.NextAction, evalCase.Expected.NextAction)
+			}
+			if !reflect.DeepEqual(output.NodePath, evalCase.Expected.NodePath) {
+				t.Fatalf("node path = %#v, want %#v", output.NodePath, evalCase.Expected.NodePath)
+			}
+			if chatModel.calls != 0 {
+				t.Fatalf("approval branch called chat model %d times", chatModel.calls)
+			}
+		})
 	}
 }
 

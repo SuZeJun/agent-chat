@@ -2,11 +2,13 @@ package ticketpg
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	chatdomain "agent-chat/internal/domain/chat"
 	domain "agent-chat/internal/domain/ticket"
 
 	"github.com/jackc/pgx/v5"
@@ -107,36 +109,51 @@ func (repository *Repository) LoadApproval(
 	`, strings.TrimSpace(approvalID), strings.TrimSpace(customerID)))
 }
 
-// Approve 原子地把 pending 转为 approved。
+// ConfirmAndEnqueue 原子确认审批、创建 ticket.create Job 并追加 Run 事件。
 //
-// 过期判定用数据库时间与传入时刻中的较严者：调用方时钟不可信，而窗口边界直接
-// 决定「过期确认不执行写操作」是否成立。
-func (repository *Repository) Approve(
+// 过期判定使用 clock_timestamp() 与调用方时刻中的较晚者。数据库时钟防止 API
+// 节点时间落后而放行过期授权，调用方时刻则让测试和显式向前校时保持保守。
+func (repository *Repository) ConfirmAndEnqueue(
 	ctx context.Context,
-	customerID string,
-	approvalID string,
-	now time.Time,
+	command domain.ConfirmCommand,
 ) (domain.ApproveResult, error) {
-	customerID = strings.TrimSpace(customerID)
-	approvalID = strings.TrimSpace(approvalID)
+	if err := command.Validate(); err != nil {
+		return domain.ApproveResult{}, fmt.Errorf(
+			"confirm ticket approval: %w: %w",
+			domain.ErrInvalidCommand,
+			err,
+		)
+	}
+	command.CustomerID = strings.TrimSpace(command.CustomerID)
+	command.ApprovalID = strings.TrimSpace(command.ApprovalID)
 
 	transaction, err := repository.database.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return domain.ApproveResult{}, mapDatabaseError("approve ticket", err)
+		return domain.ApproveResult{}, mapDatabaseError("confirm ticket approval", err)
 	}
 	defer func() {
 		_ = transaction.Rollback(ctx)
 	}()
 
-	current, err := loadForUpdate(ctx, transaction, customerID, approvalID)
+	current, err := loadForUpdate(ctx, transaction, command.CustomerID, command.ApprovalID)
+	if err != nil {
+		return domain.ApproveResult{}, err
+	}
+	effectiveNow, err := effectiveDatabaseTime(ctx, transaction, command.OccurredAt)
 	if err != nil {
 		return domain.ApproveResult{}, err
 	}
 
 	switch current.Status {
 	case domain.ApprovalStatusApproved:
-		// 重复确认不是错误：调用方据此返回首次结果而不重复创建工单。
-		return domain.ApproveResult{Approval: current, AlreadyApproved: true}, nil
+		result := domain.ApproveResult{Approval: current, AlreadyApproved: true}
+		existing, loadErr := scanTicket(transaction.QueryRow(ctx, ticketByApprovalSQL, current.ID))
+		if loadErr == nil {
+			result.Ticket = &existing
+		} else if !errors.Is(loadErr, domain.ErrNotFound) {
+			return domain.ApproveResult{}, loadErr
+		}
+		return result, nil
 	case domain.ApprovalStatusCancelled:
 		return domain.ApproveResult{}, fmt.Errorf(
 			"approve ticket: %w: approval was cancelled",
@@ -146,13 +163,24 @@ func (repository *Repository) Approve(
 		return domain.ApproveResult{}, fmt.Errorf("approve ticket: %w", domain.ErrExpired)
 	}
 
-	if current.ExpiredAt(now) {
+	if current.ExpiredAt(effectiveNow) {
 		// 越过窗口的 pending 记录在此落为终态，避免它长期停留在可确认的外观。
-		if err := markExpired(ctx, transaction, approvalID, now); err != nil {
+		if err := markExpired(ctx, transaction, command.ApprovalID, effectiveNow); err != nil {
+			return domain.ApproveResult{}, err
+		}
+		if err := appendApprovalEvent(
+			ctx,
+			transaction,
+			current.AgentRunID,
+			command.EventID,
+			chatdomain.EventTypeApprovalExpired,
+			map[string]any{"approvalId": current.ID},
+			effectiveNow,
+		); err != nil {
 			return domain.ApproveResult{}, err
 		}
 		if err := transaction.Commit(ctx); err != nil {
-			return domain.ApproveResult{}, mapDatabaseError("approve ticket", err)
+			return domain.ApproveResult{}, mapDatabaseError("confirm ticket approval", err)
 		}
 		return domain.ApproveResult{}, fmt.Errorf("approve ticket: %w", domain.ErrExpired)
 	}
@@ -165,9 +193,9 @@ func (repository *Repository) Approve(
 		WHERE id = $1
 		  AND status = 'pending'
 		  AND expires_at > $2
-	`, approvalID, now)
+	`, command.ApprovalID, effectiveNow)
 	if err != nil {
-		return domain.ApproveResult{}, mapDatabaseError("approve ticket", err)
+		return domain.ApproveResult{}, mapDatabaseError("confirm ticket approval", err)
 	}
 	if tag.RowsAffected() != 1 {
 		return domain.ApproveResult{}, fmt.Errorf(
@@ -175,12 +203,58 @@ func (repository *Repository) Approve(
 			domain.ErrInvalidState,
 		)
 	}
+	jobPayload, err := json.Marshal(domain.ExecuteCreateCommand{
+		ApprovalID:   current.ID,
+		TicketID:     command.TicketID,
+		TicketNumber: command.TicketNumber,
+		EventID:      command.TicketEventID,
+		CreatedAt:    effectiveNow,
+	})
+	if err != nil {
+		return domain.ApproveResult{}, errors.New("confirm ticket approval: encode job payload")
+	}
+	_, err = transaction.Exec(ctx, `
+		INSERT INTO jobs (
+			id,
+			job_type,
+			idempotency_key,
+			payload,
+			status,
+			available_at,
+			created_at,
+			updated_at
+		)
+		VALUES ($1, $2, $3, $4, 'pending', $5, $5, $5)
+	`,
+		command.JobID,
+		domain.CreateJobType,
+		current.ID,
+		jobPayload,
+		effectiveNow,
+	)
+	if err != nil {
+		return domain.ApproveResult{}, mapDatabaseError("create ticket job", err)
+	}
+	if err := appendApprovalEvent(
+		ctx,
+		transaction,
+		current.AgentRunID,
+		command.EventID,
+		chatdomain.EventTypeApprovalConfirmed,
+		map[string]any{
+			"approvalId": current.ID,
+			"jobId":      command.JobID,
+		},
+		effectiveNow,
+	); err != nil {
+		return domain.ApproveResult{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
-		return domain.ApproveResult{}, mapDatabaseError("approve ticket", err)
+		return domain.ApproveResult{}, mapDatabaseError("confirm ticket approval", err)
 	}
 
 	current.Status = domain.ApprovalStatusApproved
-	decidedAt := now
+	decidedAt := effectiveNow
 	current.DecidedAt = &decidedAt
 	return domain.ApproveResult{Approval: current}, nil
 }
@@ -192,6 +266,7 @@ func (repository *Repository) Cancel(
 	ctx context.Context,
 	customerID string,
 	approvalID string,
+	eventID string,
 	now time.Time,
 ) (domain.Approval, error) {
 	customerID = strings.TrimSpace(customerID)
@@ -209,6 +284,10 @@ func (repository *Repository) Cancel(
 	if err != nil {
 		return domain.Approval{}, err
 	}
+	effectiveNow, err := effectiveDatabaseTime(ctx, transaction, now)
+	if err != nil {
+		return domain.Approval{}, err
+	}
 	switch current.Status {
 	case domain.ApprovalStatusCancelled:
 		return current, nil
@@ -218,6 +297,28 @@ func (repository *Repository) Cancel(
 			"cancel ticket: %w: approval was already approved",
 			domain.ErrInvalidState,
 		)
+	case domain.ApprovalStatusExpired:
+		return domain.Approval{}, fmt.Errorf("cancel ticket: %w", domain.ErrExpired)
+	}
+	if current.ExpiredAt(effectiveNow) {
+		if err := markExpired(ctx, transaction, approvalID, effectiveNow); err != nil {
+			return domain.Approval{}, err
+		}
+		if err := appendApprovalEvent(
+			ctx,
+			transaction,
+			current.AgentRunID,
+			eventID,
+			chatdomain.EventTypeApprovalExpired,
+			map[string]any{"approvalId": current.ID},
+			effectiveNow,
+		); err != nil {
+			return domain.Approval{}, err
+		}
+		if err := transaction.Commit(ctx); err != nil {
+			return domain.Approval{}, mapDatabaseError("cancel ticket", err)
+		}
+		return domain.Approval{}, fmt.Errorf("cancel ticket: %w", domain.ErrExpired)
 	}
 
 	tag, err := transaction.Exec(ctx, `
@@ -225,8 +326,8 @@ func (repository *Repository) Cancel(
 		SET status = 'cancelled',
 		    decided_at = $2
 		WHERE id = $1
-		  AND status IN ('pending', 'expired')
-	`, approvalID, now)
+		  AND status = 'pending'
+	`, approvalID, effectiveNow)
 	if err != nil {
 		return domain.Approval{}, mapDatabaseError("cancel ticket", err)
 	}
@@ -236,12 +337,23 @@ func (repository *Repository) Cancel(
 			domain.ErrInvalidState,
 		)
 	}
+	if err := appendApprovalEvent(
+		ctx,
+		transaction,
+		current.AgentRunID,
+		eventID,
+		chatdomain.EventTypeApprovalCancelled,
+		map[string]any{"approvalId": current.ID},
+		effectiveNow,
+	); err != nil {
+		return domain.Approval{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return domain.Approval{}, mapDatabaseError("cancel ticket", err)
 	}
 
 	current.Status = domain.ApprovalStatusCancelled
-	decidedAt := now
+	decidedAt := effectiveNow
 	current.DecidedAt = &decidedAt
 	return current, nil
 }
@@ -327,6 +439,100 @@ func (repository *Repository) CreateTicket(
 	return item, nil
 }
 
+// ExecuteCreateTicket 幂等执行 ticket.create Job，并原子追加 ticket.created 事件。
+func (repository *Repository) ExecuteCreateTicket(
+	ctx context.Context,
+	command domain.ExecuteCreateCommand,
+) (domain.Ticket, error) {
+	if err := command.Validate(); err != nil {
+		return domain.Ticket{}, fmt.Errorf("execute ticket creation: %w: %w", domain.ErrInvalidCommand, err)
+	}
+	transaction, err := repository.database.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Ticket{}, mapDatabaseError("execute ticket creation", err)
+	}
+	defer func() {
+		_ = transaction.Rollback(ctx)
+	}()
+
+	approval, err := loadForUpdateByID(ctx, transaction, command.ApprovalID)
+	if err != nil {
+		return domain.Ticket{}, err
+	}
+	if approval.Status != domain.ApprovalStatusApproved {
+		return domain.Ticket{}, fmt.Errorf(
+			"execute ticket creation: %w: approval is not approved",
+			domain.ErrInvalidState,
+		)
+	}
+	existing, err := scanTicket(transaction.QueryRow(ctx, ticketByApprovalSQL, approval.ID))
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		return domain.Ticket{}, err
+	}
+
+	item := domain.Ticket{
+		ID:             command.TicketID,
+		Number:         command.TicketNumber,
+		ConversationID: approval.ConversationID,
+		CustomerID:     approval.CustomerID,
+		ApprovalID:     approval.ID,
+		Draft:          approval.Draft,
+		CreatedAt:      command.CreatedAt,
+	}
+	if err := item.Validate(); err != nil {
+		return domain.Ticket{}, fmt.Errorf("execute ticket creation: %w: %w", domain.ErrInvalidCommand, err)
+	}
+	_, err = transaction.Exec(ctx, `
+		INSERT INTO tickets (
+			id,
+			number,
+			conversation_id,
+			customer_id,
+			approval_id,
+			title,
+			description,
+			priority,
+			created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`,
+		item.ID,
+		item.Number,
+		item.ConversationID,
+		item.CustomerID,
+		item.ApprovalID,
+		item.Draft.Title,
+		item.Draft.Description,
+		item.Draft.Priority,
+		item.CreatedAt,
+	)
+	if err != nil {
+		return domain.Ticket{}, mapDatabaseError("execute ticket creation", err)
+	}
+	if err := appendApprovalEvent(
+		ctx,
+		transaction,
+		approval.AgentRunID,
+		command.EventID,
+		chatdomain.EventTypeTicketCreated,
+		map[string]any{
+			"approvalId":   approval.ID,
+			"ticketId":     item.ID,
+			"ticketNumber": item.Number,
+		},
+		command.CreatedAt,
+	); err != nil {
+		return domain.Ticket{}, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return domain.Ticket{}, mapDatabaseError("execute ticket creation", err)
+	}
+	return item, nil
+}
+
 // LoadTicketByApproval 读取审批已产生的工单。
 func (repository *Repository) LoadTicketByApproval(
 	ctx context.Context,
@@ -383,6 +589,87 @@ func loadForUpdate(
 		  AND customer_id = $2
 		FOR UPDATE
 	`, approvalID, customerID))
+}
+
+func loadForUpdateByID(
+	ctx context.Context,
+	transaction pgx.Tx,
+	approvalID string,
+) (domain.Approval, error) {
+	return scanApproval(transaction.QueryRow(ctx, `
+		SELECT
+			id,
+			conversation_id,
+			customer_id,
+			agent_run_id,
+			title,
+			description,
+			priority,
+			status,
+			idempotency_key,
+			COALESCE(
+				(SELECT ticket.id FROM tickets AS ticket WHERE ticket.approval_id = approval.id),
+				''
+			),
+			created_at,
+			expires_at,
+			decided_at
+		FROM ticket_approvals AS approval
+		WHERE id = $1
+		FOR UPDATE
+	`, strings.TrimSpace(approvalID)))
+}
+
+func effectiveDatabaseTime(
+	ctx context.Context,
+	transaction pgx.Tx,
+	callerTime time.Time,
+) (time.Time, error) {
+	var effective time.Time
+	if err := transaction.QueryRow(ctx, `
+		SELECT GREATEST(clock_timestamp(), $1::timestamptz)
+	`, callerTime).Scan(&effective); err != nil {
+		return time.Time{}, mapDatabaseError("read database time", err)
+	}
+	return effective.UTC(), nil
+}
+
+func appendApprovalEvent(
+	ctx context.Context,
+	transaction pgx.Tx,
+	runID string,
+	eventID string,
+	eventType chatdomain.EventType,
+	payload map[string]any,
+	createdAt time.Time,
+) error {
+	if strings.TrimSpace(eventID) == "" || len(strings.TrimSpace(eventID)) > 64 {
+		return fmt.Errorf("append approval event: %w: invalid event ID", domain.ErrInvalidCommand)
+	}
+	var lockedRunID string
+	if err := transaction.QueryRow(ctx, `
+		SELECT id FROM agent_runs WHERE id = $1 FOR UPDATE
+	`, runID).Scan(&lockedRunID); err != nil {
+		return mapDatabaseError("lock run for approval event", err)
+	}
+	var sequence int
+	if err := transaction.QueryRow(ctx, `
+		SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE run_id = $1
+	`, runID).Scan(&sequence); err != nil {
+		return mapDatabaseError("allocate approval event sequence", err)
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return errors.New("append approval event: encode payload")
+	}
+	_, err = transaction.Exec(ctx, `
+		INSERT INTO run_events (id, run_id, sequence, event_type, payload, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, eventID, runID, sequence, eventType, encoded, createdAt)
+	if err != nil {
+		return mapDatabaseError("append approval event", err)
+	}
+	return nil
 }
 
 func markExpired(

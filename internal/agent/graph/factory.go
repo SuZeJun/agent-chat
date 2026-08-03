@@ -151,13 +151,7 @@ func (factory *Factory) toolOptions(
 		return nil, nil
 	}
 
-	subscriptionTool, err := agenttool.NewSubscriptionTool(factory.subscriptionReader, customerID)
-	if err != nil {
-		return nil, err
-	}
-	// 草稿工具无需作用域绑定：它不读取任何数据，工单归属在持久化时由服务端
-	// 依据会话确定。
-	registry, err := agenttool.NewRegistry(subscriptionTool, agenttool.NewDraftTicketTool())
+	registry, err := newToolRegistry(factory.subscriptionReader, customerID)
 	if err != nil {
 		return nil, err
 	}
@@ -170,4 +164,19 @@ func (factory *Factory) toolOptions(
 		return nil, err
 	}
 	return []RuntimeOption{WithTools(planner, registry, customerID)}, nil
+}
+
+// newToolRegistry 是生产 Runtime 构建工具白名单的唯一入口。
+//
+// 草稿工具无需作用域绑定：它不读取任何数据，工单归属在持久化时由服务端
+// 依据会话确定。集中注册可以让测试直接覆盖生产接线路径，避免只验证替身注册表。
+func newToolRegistry(
+	reader crm.SubscriptionReader,
+	customerID string,
+) (*agenttool.Registry, error) {
+	subscriptionTool, err := agenttool.NewSubscriptionTool(reader, customerID)
+	if err != nil {
+		return nil, err
+	}
+	return agenttool.NewRegistry(subscriptionTool, agenttool.NewDraftTicketTool())
 }

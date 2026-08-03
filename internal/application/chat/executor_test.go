@@ -16,19 +16,21 @@ import (
 )
 
 type fakeRunRepository struct {
-	source          domain.RunSource
-	beginCommand    domain.BeginRunAttempt
-	beginErr        error
-	progressEvents  []domain.EventDraft
-	progressErr     error
-	completeCommand domain.CompleteRunCommand
-	completeErr     error
-	failureCommand  domain.RecordRunFailureCommand
-	failureErr      error
-	mutex           sync.Mutex
-	beginCalls      int
-	completeCalls   int
-	failureCalls    int
+	source                domain.RunSource
+	beginCommand          domain.BeginRunAttempt
+	beginErr              error
+	progressEvents        []domain.EventDraft
+	progressErr           error
+	completeCommand       domain.CompleteRunCommand
+	approval              *ticketdomain.Approval
+	completeErr           error
+	failureCommand        domain.RecordRunFailureCommand
+	failureErr            error
+	mutex                 sync.Mutex
+	beginCalls            int
+	completeCalls         int
+	approvalCompleteCalls int
+	failureCalls          int
 }
 
 func (repository *fakeRunRepository) AppendRunProgress(
@@ -71,6 +73,17 @@ func (repository *fakeRunRepository) CompleteRun(
 ) error {
 	repository.completeCalls++
 	repository.completeCommand = command
+	return repository.completeErr
+}
+
+func (repository *fakeRunRepository) CompleteRunWithApproval(
+	_ context.Context,
+	command domain.CompleteRunCommand,
+	approval ticketdomain.Approval,
+) error {
+	repository.approvalCompleteCalls++
+	repository.completeCommand = command
+	repository.approval = &approval
 	return repository.completeErr
 }
 
@@ -423,19 +436,6 @@ func TestExecuteRunConvergesRunWhenCompletionFails(t *testing.T) {
 	}
 }
 
-type fakeApprovalRecorder struct {
-	created []ticketdomain.Approval
-	err     error
-}
-
-func (recorder *fakeApprovalRecorder) CreateApproval(
-	_ context.Context,
-	approval ticketdomain.Approval,
-) error {
-	recorder.created = append(recorder.created, approval)
-	return recorder.err
-}
-
 func testDraftOutput() agentgraph.Output {
 	output := testGraphOutput()
 	output.TicketDraft = &ticketdomain.Draft{
@@ -446,20 +446,15 @@ func testDraftOutput() agentgraph.Output {
 	return output
 }
 
-// TestExecuteRunRecordsApprovalBeforeCompletingRun 锁定审批与 Run 终态的先后。
-//
-// 顺序不能反：若先结束 Run 再创建审批，两者之间崩溃会让客户看到「请确认」却
-// 没有可确认的对象。
-func TestExecuteRunRecordsApprovalBeforeCompletingRun(t *testing.T) {
+// TestExecuteRunCompletesApprovalAtomically 锁定审批、事件与 Run 终态使用同一 Port。
+func TestExecuteRunCompletesApprovalAtomically(t *testing.T) {
 	now := time.Now().UTC()
 	repository := &fakeRunRepository{source: testRunSource(domain.RunStatusRunning, now)}
-	recorder := &fakeApprovalRecorder{}
 	executor := newTestExecutor(
 		t,
 		repository,
 		&fakeRuntimeFactory{runner: &fakeGraphRunner{output: testDraftOutput()}},
 		now,
-		WithApprovalRecorder(recorder),
 	)
 
 	if err := executor.ExecuteRun(context.Background(), ExecuteRunRequest{
@@ -470,10 +465,17 @@ func TestExecuteRunRecordsApprovalBeforeCompletingRun(t *testing.T) {
 		t.Fatalf("ExecuteRun returned error: %v", err)
 	}
 
-	if len(recorder.created) != 1 {
-		t.Fatalf("expected exactly one approval, got %d", len(recorder.created))
+	if repository.approvalCompleteCalls != 1 || repository.completeCalls != 0 {
+		t.Fatalf(
+			"draft must use atomic completion: approval=%d plain=%d",
+			repository.approvalCompleteCalls,
+			repository.completeCalls,
+		)
 	}
-	approval := recorder.created[0]
+	if repository.approval == nil {
+		t.Fatal("atomic completion did not receive approval")
+	}
+	approval := *repository.approval
 	// 授权作用域来自持久化的会话关系，不来自模型输出。
 	if approval.CustomerID != "customer-1" || approval.AgentRunID != "run-1" {
 		t.Fatalf("approval carries the wrong scope: %#v", approval)
@@ -489,61 +491,18 @@ func TestExecuteRunRecordsApprovalBeforeCompletingRun(t *testing.T) {
 	if !approval.ExpiresAt.After(approval.CreatedAt) {
 		t.Fatalf("approval window is not positive: %#v", approval)
 	}
-	if repository.completeCalls != 1 {
-		t.Fatalf("run was not completed: %d", repository.completeCalls)
+	if repository.completeCommand.Result["approvalId"] != approval.ID {
+		t.Fatalf("result and approval ID differ: %#v", repository.completeCommand.Result)
 	}
-}
-
-// TestExecuteRunTreatsDuplicateApprovalAsSuccess 保证 Run 重试不产生第二个审批。
-func TestExecuteRunTreatsDuplicateApprovalAsSuccess(t *testing.T) {
-	now := time.Now().UTC()
-	repository := &fakeRunRepository{source: testRunSource(domain.RunStatusRunning, now)}
-	// 唯一约束冲突由仓储映射为 ErrInvalidState，表示此前的尝试已创建审批。
-	recorder := &fakeApprovalRecorder{err: ticketdomain.ErrInvalidState}
-	executor := newTestExecutor(
-		t,
-		repository,
-		&fakeRuntimeFactory{runner: &fakeGraphRunner{output: testDraftOutput()}},
-		now,
-		WithApprovalRecorder(recorder),
-	)
-
-	if err := executor.ExecuteRun(context.Background(), ExecuteRunRequest{
-		RunID:       "run-1",
-		Attempt:     2,
-		MaxAttempts: 5,
-	}); err != nil {
-		t.Fatalf("retry must not fail on an existing approval: %v", err)
+	foundRequired := false
+	for _, event := range repository.completeCommand.Events {
+		if event.Type == domain.EventTypeApprovalRequired &&
+			event.Payload["approvalId"] == approval.ID {
+			foundRequired = true
+		}
 	}
-	if repository.completeCalls != 1 {
-		t.Fatalf("run was not completed after duplicate approval: %d", repository.completeCalls)
-	}
-}
-
-// TestExecuteRunFailsWhenDraftHasNowhereToGo 保证接线缺失时显式失败。
-//
-// 静默丢弃草稿会让客户看到「请确认」而没有可确认的对象。
-func TestExecuteRunFailsWhenDraftHasNowhereToGo(t *testing.T) {
-	now := time.Now().UTC()
-	repository := &fakeRunRepository{source: testRunSource(domain.RunStatusRunning, now)}
-	executor := newTestExecutor(
-		t,
-		repository,
-		&fakeRuntimeFactory{runner: &fakeGraphRunner{output: testDraftOutput()}},
-		now,
-	)
-
-	err := executor.ExecuteRun(context.Background(), ExecuteRunRequest{
-		RunID:       "run-1",
-		Attempt:     1,
-		MaxAttempts: 5,
-	})
-	var failure *Failure
-	if !errors.As(err, &failure) || failure.Code != "record_ticket_approval_failed" {
-		t.Fatalf("unexpected failure: %v", err)
-	}
-	if repository.completeCalls != 0 {
-		t.Fatal("run must not complete when the draft could not be recorded")
+	if !foundRequired {
+		t.Fatalf("approval.required event is missing: %#v", repository.completeCommand.Events)
 	}
 }
 
@@ -551,13 +510,11 @@ func TestExecuteRunFailsWhenDraftHasNowhereToGo(t *testing.T) {
 func TestExecuteRunSkipsApprovalWithoutDraft(t *testing.T) {
 	now := time.Now().UTC()
 	repository := &fakeRunRepository{source: testRunSource(domain.RunStatusRunning, now)}
-	recorder := &fakeApprovalRecorder{}
 	executor := newTestExecutor(
 		t,
 		repository,
 		&fakeRuntimeFactory{runner: &fakeGraphRunner{output: testGraphOutput()}},
 		now,
-		WithApprovalRecorder(recorder),
 	)
 
 	if err := executor.ExecuteRun(context.Background(), ExecuteRunRequest{
@@ -567,8 +524,8 @@ func TestExecuteRunSkipsApprovalWithoutDraft(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ExecuteRun returned error: %v", err)
 	}
-	if len(recorder.created) != 0 {
-		t.Fatalf("answer without a draft created an approval: %#v", recorder.created)
+	if repository.approvalCompleteCalls != 0 || repository.completeCalls != 1 {
+		t.Fatal("answer without a draft used approval completion")
 	}
 }
 
@@ -652,7 +609,6 @@ func newTestExecutor(
 	repository RunRepository,
 	factory RuntimeFactory,
 	now time.Time,
-	options ...ExecutorOption,
 ) *Executor {
 	t.Helper()
 	executor, err := NewExecutor(
@@ -661,7 +617,6 @@ func newTestExecutor(
 		&sequentialIDGenerator{},
 		fixedClock{now: now},
 		slog.New(slog.DiscardHandler),
-		options...,
 	)
 	if err != nil {
 		t.Fatalf("NewExecutor returned error: %v", err)

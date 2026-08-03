@@ -11,6 +11,7 @@ import (
 
 	application "agent-chat/internal/application/chat"
 	domain "agent-chat/internal/domain/chat"
+	ticketdomain "agent-chat/internal/domain/ticket"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -125,6 +126,8 @@ func TestRunExecutionLifecycleAgainstPostgres(t *testing.T) {
 	if trace.RequestID != "request-execution" ||
 		trace.ConversationID != "conversation-execution" ||
 		len(trace.Steps) != 1 ||
+		len(trace.Events) != 7 ||
+		trace.Events[len(trace.Events)-1].Type != domain.EventTypeRunCompleted ||
 		trace.Steps[0].Name != "grounded_generate" ||
 		trace.Steps[0].PromptTokens != 120 ||
 		trace.Result["answer"] != command.Result["answer"] {
@@ -157,6 +160,122 @@ func TestRunExecutionLifecycleAgainstPostgres(t *testing.T) {
 		t.Fatalf("late progress must be ignored, got error: %v", err)
 	}
 	assertRunEventCount(t, ctx, pool, started.RunID, 7)
+}
+
+func TestCompleteRunWithApprovalIsAtomicAgainstPostgres(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	pool := openChatTestDatabase(t, ctx, databaseURL)
+	defer pool.Close()
+
+	repository := NewRepository(pool)
+	now := time.Now().UTC()
+	createKnowledgeBase(t, ctx, pool, "base-approval-atomic")
+	createConversation(t, ctx, repository, domain.Conversation{
+		ID:              "conversation-approval-atomic",
+		CustomerID:      "customer-approval-atomic",
+		KnowledgeBaseID: "base-approval-atomic",
+		Status:          domain.ConversationStatusAIActive,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	started, err := newChatService(t, repository).SendMessage(ctx, application.Request{
+		RequestID:       "request-approval-atomic",
+		CustomerID:      "customer-approval-atomic",
+		ConversationID:  "conversation-approval-atomic",
+		ClientMessageID: "client-approval-atomic",
+		Content:         "请创建工单。",
+	})
+	if err != nil {
+		t.Fatalf("create pending run: %v", err)
+	}
+	if _, err := repository.BeginRunAttempt(ctx, domain.BeginRunAttempt{
+		RunID:   started.RunID,
+		Attempt: 1,
+		Event: executionEvent(
+			"event-approval-atomic-started",
+			domain.EventTypeRunStarted,
+			now.Add(time.Second),
+			map[string]any{"attempt": 1},
+		),
+	}); err != nil {
+		t.Fatalf("begin run attempt: %v", err)
+	}
+
+	var sourceMessageID string
+	if err := pool.QueryRow(
+		ctx,
+		"SELECT source_message_id FROM agent_runs WHERE id = $1",
+		started.RunID,
+	).Scan(&sourceMessageID); err != nil {
+		t.Fatalf("load source message ID: %v", err)
+	}
+	completedAt := now.Add(2 * time.Second)
+	approval := ticketdomain.Approval{
+		ID:             "approval-atomic",
+		ConversationID: "conversation-approval-atomic",
+		CustomerID:     "customer-approval-atomic",
+		AgentRunID:     started.RunID,
+		Draft: ticketdomain.Draft{
+			Title:       "无法导出账单",
+			Description: "客户反馈导出按钮点击后没有反应。",
+			Priority:    ticketdomain.PriorityNormal,
+		},
+		Status:         ticketdomain.ApprovalStatusPending,
+		IdempotencyKey: ticketdomain.DeriveIdempotencyKey(started.RunID),
+		CreatedAt:      completedAt,
+		ExpiresAt:      completedAt.Add(30 * time.Minute),
+	}
+	command := domain.CompleteRunCommand{
+		RunID: started.RunID,
+		Message: domain.Message{
+			// 先故意复用客户消息主键，使审批插入后的消息写入失败。
+			ID:             sourceMessageID,
+			ConversationID: approval.ConversationID,
+			AgentRunID:     started.RunID,
+			Role:           domain.MessageRoleAssistant,
+			Content:        "工单草稿已生成，请确认。",
+			CreatedAt:      completedAt,
+		},
+		Result: map[string]any{"approvalId": approval.ID},
+		Events: []domain.EventDraft{
+			executionEvent(
+				"event-approval-atomic-required",
+				domain.EventTypeApprovalRequired,
+				completedAt,
+				map[string]any{"approvalId": approval.ID},
+			),
+			executionEvent(
+				"event-approval-atomic-completed",
+				domain.EventTypeRunCompleted,
+				completedAt,
+				map[string]any{"status": "completed"},
+			),
+		},
+		CompletedAt: completedAt,
+	}
+	if err := repository.CompleteRunWithApproval(ctx, command, approval); err == nil {
+		t.Fatal("expected duplicate message ID to fail completion")
+	}
+	assertApprovalAtomicState(t, ctx, pool, started.RunID, approval.ID, "running", 0)
+
+	command.Message.ID = "message-approval-atomic"
+	if err := repository.CompleteRunWithApproval(ctx, command, approval); err != nil {
+		t.Fatalf("retry atomic completion: %v", err)
+	}
+	assertApprovalAtomicState(t, ctx, pool, started.RunID, approval.ID, "completed", 1)
+	trace, err := repository.LoadRunTrace(ctx, started.RunID)
+	if err != nil {
+		t.Fatalf("load approval Trace: %v", err)
+	}
+	if !traceHasEvent(trace, domain.EventTypeApprovalRequired, approval.ID) {
+		t.Fatalf("approval.required is absent from Trace: %#v", trace.Events)
+	}
 }
 
 func TestRunFailureRetriesAndTerminatesAgainstPostgres(t *testing.T) {
@@ -341,6 +460,55 @@ func TestCompleteRunRejectsConversationTakeover(t *testing.T) {
 	}
 	assertRunStatus(t, ctx, pool, started.RunID, "running", "")
 	assertRunEventCount(t, ctx, pool, started.RunID, 2)
+}
+
+func assertApprovalAtomicState(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	runID string,
+	approvalID string,
+	wantStatus string,
+	wantApprovalCount int,
+) {
+	t.Helper()
+
+	var status string
+	if err := pool.QueryRow(
+		ctx,
+		"SELECT status FROM agent_runs WHERE id = $1",
+		runID,
+	).Scan(&status); err != nil {
+		t.Fatalf("load run status: %v", err)
+	}
+	if status != wantStatus {
+		t.Fatalf("run status = %q, want %q", status, wantStatus)
+	}
+
+	var approvalCount int
+	if err := pool.QueryRow(
+		ctx,
+		"SELECT count(*) FROM ticket_approvals WHERE id = $1",
+		approvalID,
+	).Scan(&approvalCount); err != nil {
+		t.Fatalf("count approvals: %v", err)
+	}
+	if approvalCount != wantApprovalCount {
+		t.Fatalf("approval count = %d, want %d", approvalCount, wantApprovalCount)
+	}
+}
+
+func traceHasEvent(
+	trace domain.RunTraceSnapshot,
+	eventType domain.EventType,
+	approvalID string,
+) bool {
+	for _, event := range trace.Events {
+		if event.Type == eventType && event.Payload["approvalId"] == approvalID {
+			return true
+		}
+	}
+	return false
 }
 
 func executionEvent(

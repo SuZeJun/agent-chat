@@ -231,6 +231,16 @@ func TestGetRunTraceAPI(t *testing.T) {
 			CreatedAt:      now,
 			StartedAt:      &now,
 			CompletedAt:    &now,
+			Events: []domain.RunEvent{
+				{
+					ID:        "event_approval_required",
+					RunID:     "run_1",
+					Sequence:  2,
+					Type:      domain.EventTypeApprovalRequired,
+					Payload:   map[string]any{"approvalId": "approval_1"},
+					CreatedAt: now,
+				},
+			},
 			Steps: []domain.RunStep{
 				{
 					Order: 1,
@@ -271,6 +281,9 @@ func TestGetRunTraceAPI(t *testing.T) {
 	if reader.runID != "run_1" ||
 		payload.RequestID != "request_1" ||
 		len(payload.Steps) != 1 ||
+		len(payload.Events) != 1 ||
+		payload.Events[0].Type != string(domain.EventTypeApprovalRequired) ||
+		payload.Events[0].Payload["approvalId"] != "approval_1" ||
 		payload.Steps[0].PromptTokens != 120 {
 		t.Fatalf("unexpected Trace response: %#v", payload)
 	}

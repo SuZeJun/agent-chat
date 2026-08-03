@@ -90,6 +90,7 @@ type runTraceResponse struct {
 	Result         map[string]any         `json:"result"`
 	ErrorCode      string                 `json:"errorCode,omitempty"`
 	Steps          []runTraceStepResponse `json:"steps"`
+	Events         []runEventResponse     `json:"events"`
 	CreatedAt      string                 `json:"createdAt"`
 	StartedAt      string                 `json:"startedAt,omitempty"`
 	CompletedAt    string                 `json:"completedAt,omitempty"`
@@ -314,6 +315,10 @@ func getRunTraceHandler(service RunTraceReader) gin.HandlerFunc {
 				CompletedAt:      step.CompletedAt.UTC().Format(time.RFC3339Nano),
 			}
 		}
+		events := make([]runEventResponse, len(trace.Events))
+		for index, event := range trace.Events {
+			events[index] = newRunEventResponse(event)
+		}
 		response := runTraceResponse{
 			RunID:          trace.RunID,
 			RequestID:      trace.RequestID,
@@ -323,6 +328,7 @@ func getRunTraceHandler(service RunTraceReader) gin.HandlerFunc {
 			Result:         trace.Result,
 			ErrorCode:      trace.ErrorCode,
 			Steps:          steps,
+			Events:         events,
 			CreatedAt:      trace.CreatedAt.UTC().Format(time.RFC3339Nano),
 		}
 		if trace.StartedAt != nil {
@@ -337,14 +343,7 @@ func getRunTraceHandler(service RunTraceReader) gin.HandlerFunc {
 
 // writeRunEvent 使用持久化 sequence 作为 SSE id，支持客户端去重和断线续传。
 func writeRunEvent(ctx *gin.Context, event domain.RunEvent) error {
-	payload, err := json.Marshal(runEventResponse{
-		EventID:   event.ID,
-		RunID:     event.RunID,
-		Sequence:  event.Sequence,
-		Type:      string(event.Type),
-		Payload:   event.Payload,
-		CreatedAt: event.CreatedAt.UTC().Format(time.RFC3339Nano),
-	})
+	payload, err := json.Marshal(newRunEventResponse(event))
 	if err != nil {
 		return err
 	}
@@ -356,6 +355,17 @@ func writeRunEvent(ctx *gin.Context, event domain.RunEvent) error {
 		payload,
 	)
 	return err
+}
+
+func newRunEventResponse(event domain.RunEvent) runEventResponse {
+	return runEventResponse{
+		EventID:   event.ID,
+		RunID:     event.RunID,
+		Sequence:  event.Sequence,
+		Type:      string(event.Type),
+		Payload:   event.Payload,
+		CreatedAt: event.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
 }
 
 // parseLastEventID 将客户端游标限制为非负 sequence，空值表示从头读取。

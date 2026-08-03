@@ -109,5 +109,42 @@ func (repository *Repository) LoadRunTrace(
 	if err := rows.Err(); err != nil {
 		return domain.RunTraceSnapshot{}, mapDatabaseError("load run trace steps", err)
 	}
+	rows.Close()
+
+	eventRows, err := repository.database.Query(ctx, `
+		SELECT id, run_id, sequence, event_type, payload, created_at
+		FROM run_events
+		WHERE run_id = $1
+		ORDER BY sequence
+	`, runID)
+	if err != nil {
+		return domain.RunTraceSnapshot{}, mapDatabaseError("load run trace events", err)
+	}
+	defer eventRows.Close()
+	trace.Events = make([]domain.RunEvent, 0)
+	for eventRows.Next() {
+		var event domain.RunEvent
+		var payload []byte
+		if err := eventRows.Scan(
+			&event.ID,
+			&event.RunID,
+			&event.Sequence,
+			&event.Type,
+			&payload,
+			&event.CreatedAt,
+		); err != nil {
+			return domain.RunTraceSnapshot{}, mapDatabaseError("scan run trace event", err)
+		}
+		if err := json.Unmarshal(payload, &event.Payload); err != nil {
+			return domain.RunTraceSnapshot{}, errors.New("load run trace: invalid event payload")
+		}
+		if err := event.Validate(); err != nil {
+			return domain.RunTraceSnapshot{}, errors.New("load run trace: invalid persisted event")
+		}
+		trace.Events = append(trace.Events, event)
+	}
+	if err := eventRows.Err(); err != nil {
+		return domain.RunTraceSnapshot{}, mapDatabaseError("load run trace events", err)
+	}
 	return trace, nil
 }

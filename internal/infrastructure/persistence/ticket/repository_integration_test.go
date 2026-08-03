@@ -2,6 +2,7 @@ package ticketpg_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -49,11 +50,11 @@ func TestApprovalSafetyPropertiesAgainstPostgres(t *testing.T) {
 	t.Run("取消后不执行写操作", func(t *testing.T) {
 		approval := seedApproval(t, ctx, pool, "cancel-1", now)
 
-		if _, err := repository.Cancel(ctx, approval.CustomerID, approval.ID, now); err != nil {
+		if _, err := repository.Cancel(ctx, approval.CustomerID, approval.ID, "evt-cancel-1", now); err != nil {
 			t.Fatalf("Cancel returned error: %v", err)
 		}
 		// 取消后确认必须失败。
-		if _, err := repository.Approve(ctx, approval.CustomerID, approval.ID, now); !errors.Is(
+		if _, err := repository.ConfirmAndEnqueue(ctx, confirmCommand(approval, "cancel", now)); !errors.Is(
 			err,
 			domain.ErrInvalidState,
 		) {
@@ -67,18 +68,15 @@ func TestApprovalSafetyPropertiesAgainstPostgres(t *testing.T) {
 			t.Fatalf("expected cancelled approval to reject ticket creation, got %v", err)
 		}
 		assertTicketCount(t, ctx, pool, approval.ID, 0)
+		assertRunEventTypeCount(t, ctx, pool, approval.AgentRunID, "approval.cancelled", 1)
 	})
 
 	t.Run("过期确认不执行写操作", func(t *testing.T) {
 		approval := seedApproval(t, ctx, pool, "expire-1", now)
 
 		afterExpiry := approval.ExpiresAt.Add(time.Second)
-		if _, err := repository.Approve(
-			ctx,
-			approval.CustomerID,
-			approval.ID,
-			afterExpiry,
-		); !errors.Is(err, domain.ErrExpired) {
+		command := confirmCommand(approval, "expired", afterExpiry)
+		if _, err := repository.ConfirmAndEnqueue(ctx, command); !errors.Is(err, domain.ErrExpired) {
 			t.Fatalf("expected expired approval to be rejected, got %v", err)
 		}
 		// 过期的 pending 记录必须落为终态，不能继续保持可确认的外观。
@@ -90,39 +88,55 @@ func TestApprovalSafetyPropertiesAgainstPostgres(t *testing.T) {
 			t.Fatalf("expired approval was not settled: %#v", stored)
 		}
 		assertTicketCount(t, ctx, pool, approval.ID, 0)
+		assertRunEventTypeCount(t, ctx, pool, approval.AgentRunID, "approval.expired", 1)
+	})
+
+	t.Run("调用方时钟落后不能确认已过期审批", func(t *testing.T) {
+		createdAt := now.Add(-2 * time.Hour)
+		approval := seedApproval(t, ctx, pool, "database-expire-1", createdAt)
+
+		// 模拟 API 实例的本地时钟严重落后：调用方给出的时间仍在有效期内，
+		// PostgreSQL 当前时间已经超过 expires_at，仓储必须以数据库时间兜底。
+		callerTime := createdAt.Add(5 * time.Minute)
+		command := confirmCommand(approval, "database-expired", callerTime)
+		if _, err := repository.ConfirmAndEnqueue(ctx, command); !errors.Is(err, domain.ErrExpired) {
+			t.Fatalf("expected database clock to reject expired approval, got %v", err)
+		}
+		assertJobCount(t, ctx, pool, approval.ID, 0)
+		assertTicketCount(t, ctx, pool, approval.ID, 0)
+		assertRunEventTypeCount(t, ctx, pool, approval.AgentRunID, "approval.expired", 1)
 	})
 
 	t.Run("重复确认不产生重复副作用", func(t *testing.T) {
 		approval := seedApproval(t, ctx, pool, "approve-1", now)
 
-		first, err := repository.Approve(ctx, approval.CustomerID, approval.ID, now)
+		command := confirmCommand(approval, "approve", now)
+		first, err := repository.ConfirmAndEnqueue(ctx, command)
 		if err != nil {
 			t.Fatalf("first Approve returned error: %v", err)
 		}
 		if first.AlreadyApproved {
 			t.Fatal("first approval must not report AlreadyApproved")
 		}
-		created, err := repository.CreateTicket(ctx, newTicket("tkt-approve", approval))
+		created, err := repository.ExecuteCreateTicket(ctx, executeCommand(command))
 		if err != nil {
 			t.Fatalf("CreateTicket returned error: %v", err)
 		}
 
 		// 第二次确认必须报告已确认，且不产生第二张工单。
-		second, err := repository.Approve(ctx, approval.CustomerID, approval.ID, now)
+		second, err := repository.ConfirmAndEnqueue(ctx, confirmCommand(approval, "replay", now))
 		if err != nil {
 			t.Fatalf("second Approve returned error: %v", err)
 		}
 		if !second.AlreadyApproved {
 			t.Fatal("repeated approval must report AlreadyApproved")
 		}
-		again, err := repository.CreateTicket(ctx, newTicket("tkt-approve-2", approval))
-		if err != nil {
-			t.Fatalf("repeated CreateTicket returned error: %v", err)
-		}
-		if again.ID != created.ID || again.Number != created.Number {
-			t.Fatalf("repeated creation produced a different ticket: %#v vs %#v", again, created)
+		if second.Ticket == nil || second.Ticket.ID != created.ID || second.Ticket.Number != created.Number {
+			t.Fatalf("repeated confirmation did not return first ticket: %#v vs %#v", second.Ticket, created)
 		}
 		assertTicketCount(t, ctx, pool, approval.ID, 1)
+		assertRunEventTypeCount(t, ctx, pool, approval.AgentRunID, "approval.confirmed", 1)
+		assertRunEventTypeCount(t, ctx, pool, approval.AgentRunID, "ticket.created", 1)
 	})
 }
 
@@ -149,13 +163,9 @@ func TestConcurrentApprovalCreatesSingleTicket(t *testing.T) {
 		group.Add(1)
 		go func(index int) {
 			defer group.Done()
-			if _, err := repository.Approve(ctx, approval.CustomerID, approval.ID, now); err != nil {
-				results <- err
-				return
-			}
-			_, err := repository.CreateTicket(
+			_, err := repository.ConfirmAndEnqueue(
 				ctx,
-				newTicket(fmt.Sprintf("tkt-concurrent-%d", index), approval),
+				confirmCommand(approval, fmt.Sprintf("concurrent-%d", index), now),
 			)
 			results <- err
 		}(index)
@@ -168,7 +178,17 @@ func TestConcurrentApprovalCreatesSingleTicket(t *testing.T) {
 			t.Fatalf("concurrent approval returned error: %v", err)
 		}
 	}
+	assertJobCount(t, ctx, pool, approval.ID, 1)
+	command := loadCreateCommand(t, ctx, pool, approval.ID)
+	if _, err := repository.ExecuteCreateTicket(ctx, command); err != nil {
+		t.Fatalf("ExecuteCreateTicket returned error: %v", err)
+	}
+	if _, err := repository.ExecuteCreateTicket(ctx, command); err != nil {
+		t.Fatalf("replayed ExecuteCreateTicket returned error: %v", err)
+	}
 	assertTicketCount(t, ctx, pool, approval.ID, 1)
+	assertRunEventTypeCount(t, ctx, pool, approval.AgentRunID, "approval.confirmed", 1)
+	assertRunEventTypeCount(t, ctx, pool, approval.AgentRunID, "ticket.created", 1)
 }
 
 func seedApproval(
@@ -196,7 +216,7 @@ func seedApproval(
 			Priority:    domain.PriorityNormal,
 		},
 		Status:         domain.ApprovalStatusPending,
-		IdempotencyKey: domain.DeriveIdempotencyKey(approvalID),
+		IdempotencyKey: domain.DeriveIdempotencyKey(runID),
 		CreatedAt:      now,
 		ExpiresAt:      now.Add(30 * time.Minute),
 	}
@@ -204,6 +224,97 @@ func seedApproval(
 		t.Fatalf("CreateApproval returned error: %v", err)
 	}
 	return approval
+}
+
+func confirmCommand(approval domain.Approval, suffix string, now time.Time) domain.ConfirmCommand {
+	return domain.ConfirmCommand{
+		CustomerID:    approval.CustomerID,
+		ApprovalID:    approval.ID,
+		JobID:         "job-" + suffix,
+		TicketID:      "tkt-" + suffix,
+		TicketNumber:  "TK-" + strings.ToUpper(suffix),
+		EventID:       "evt-confirm-" + suffix,
+		TicketEventID: "evt-created-" + suffix,
+		OccurredAt:    now,
+	}
+}
+
+func executeCommand(command domain.ConfirmCommand) domain.ExecuteCreateCommand {
+	return domain.ExecuteCreateCommand{
+		ApprovalID:   command.ApprovalID,
+		TicketID:     command.TicketID,
+		TicketNumber: command.TicketNumber,
+		EventID:      command.TicketEventID,
+		CreatedAt:    command.OccurredAt,
+	}
+}
+
+func assertJobCount(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	approvalID string,
+	expected int,
+) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(
+		ctx,
+		"SELECT count(*) FROM jobs WHERE job_type = $1 AND idempotency_key = $2",
+		domain.CreateJobType,
+		approvalID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count ticket jobs: %v", err)
+	}
+	if count != expected {
+		t.Fatalf("expected %d ticket jobs, got %d", expected, count)
+	}
+}
+
+func assertRunEventTypeCount(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	runID string,
+	eventType string,
+	expected int,
+) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(
+		ctx,
+		"SELECT count(*) FROM run_events WHERE run_id = $1 AND event_type = $2",
+		runID,
+		eventType,
+	).Scan(&count); err != nil {
+		t.Fatalf("count %s events: %v", eventType, err)
+	}
+	if count != expected {
+		t.Fatalf("expected %d %s events, got %d", expected, eventType, count)
+	}
+}
+
+func loadCreateCommand(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	approvalID string,
+) domain.ExecuteCreateCommand {
+	t.Helper()
+	var payload []byte
+	if err := pool.QueryRow(
+		ctx,
+		"SELECT payload FROM jobs WHERE job_type = $1 AND idempotency_key = $2",
+		domain.CreateJobType,
+		approvalID,
+	).Scan(&payload); err != nil {
+		t.Fatalf("load ticket job: %v", err)
+	}
+	var command domain.ExecuteCreateCommand
+	if err := json.Unmarshal(payload, &command); err != nil {
+		t.Fatalf("decode ticket job: %v", err)
+	}
+	return command
 }
 
 func newTicket(id string, approval domain.Approval) domain.Ticket {

@@ -73,7 +73,7 @@ func NewService(
 	return &Service{repository: repository, idGenerator: idGenerator, clock: clock}, nil
 }
 
-// Confirm 确认工单草稿并创建工单。
+// Confirm 确认工单草稿并原子创建持久化写操作 Job。
 //
 // 幂等：重复确认不会创建第二张工单，而是返回首次结果。这既是发布门槛要求的
 // 安全属性，也是正常的用户行为——客户可能因为网络重试而重复提交确认。
@@ -88,34 +88,21 @@ func (service *Service) Confirm(
 	}
 
 	now := service.clock.Now().UTC()
-	result, err := service.repository.Approve(ctx, customerID, approvalID, now)
+	result, err := service.repository.ConfirmAndEnqueue(ctx, domain.ConfirmCommand{
+		CustomerID:    customerID,
+		ApprovalID:    approvalID,
+		JobID:         service.idGenerator.NewID("job_"),
+		TicketID:      service.idGenerator.NewID("tkt_"),
+		TicketNumber:  service.ticketNumber(now),
+		EventID:       service.idGenerator.NewID("evt_"),
+		TicketEventID: service.idGenerator.NewID("evt_"),
+		OccurredAt:    now,
+	})
 	if err != nil {
 		return Decision{}, classifyApprovalError("confirm", err)
 	}
 
-	// 已确认时工单必然已经创建：确认与创建在同一次调用内完成，两者之间没有
-	// 客户可介入的窗口。此处直接读取而不重新创建。
-	if result.AlreadyApproved {
-		existing, err := service.repository.LoadTicketByApproval(ctx, approvalID)
-		if err != nil {
-			return Decision{}, classifyApprovalError("load ticket", err)
-		}
-		return Decision{Approval: result.Approval, Ticket: &existing}, nil
-	}
-
-	created, err := service.repository.CreateTicket(ctx, domain.Ticket{
-		ID:             service.idGenerator.NewID("tkt_"),
-		Number:         service.ticketNumber(now),
-		ConversationID: result.Approval.ConversationID,
-		CustomerID:     result.Approval.CustomerID,
-		ApprovalID:     result.Approval.ID,
-		Draft:          result.Approval.Draft,
-		CreatedAt:      now,
-	})
-	if err != nil {
-		return Decision{}, classifyApprovalError("create ticket", err)
-	}
-	return Decision{Approval: result.Approval, Ticket: &created}, nil
+	return Decision{Approval: result.Approval, Ticket: result.Ticket}, nil
 }
 
 // Cancel 取消工单草稿；取消后写操作永远不会执行。
@@ -133,12 +120,35 @@ func (service *Service) Cancel(
 		ctx,
 		customerID,
 		approvalID,
+		service.idGenerator.NewID("evt_"),
 		service.clock.Now().UTC(),
 	)
 	if err != nil {
 		return Decision{}, classifyApprovalError("cancel", err)
 	}
 	return Decision{Approval: approval}, nil
+}
+
+// Get 读取审批当前状态；Job 完成后同时返回稳定工单编号。
+func (service *Service) Get(
+	ctx context.Context,
+	customerID string,
+	approvalID string,
+) (Decision, error) {
+	approval, err := service.LoadApproval(ctx, customerID, approvalID)
+	if err != nil {
+		return Decision{}, err
+	}
+	decision := Decision{Approval: approval}
+	if approval.TicketID == "" {
+		return decision, nil
+	}
+	created, err := service.repository.LoadTicketByApproval(ctx, approval.ID)
+	if err != nil {
+		return Decision{}, classifyApprovalError("load ticket", err)
+	}
+	decision.Ticket = &created
+	return decision, nil
 }
 
 // LoadApproval 读取客户授权范围内的审批，供界面回显草稿与当前状态。
