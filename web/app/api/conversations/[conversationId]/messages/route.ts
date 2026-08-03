@@ -4,6 +4,32 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ conversationId: string }> };
 
+/** 转发客户会话历史查询，并由服务端配置注入客户身份。 */
+export async function GET(request: Request, context: RouteContext) {
+  const { conversationId } = await context.params;
+  const config = readServerConfig();
+  const incoming = new URL(request.url);
+  const upstreamURL = new URL(
+    `${config.apiBaseUrl}/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`,
+  );
+  for (const name of ["before", "limit"]) {
+    const value = incoming.searchParams.get(name);
+    if (value) {
+      upstreamURL.searchParams.set(name, value);
+    }
+  }
+
+  const upstream = await fetch(upstreamURL, {
+    headers: { "X-Customer-ID": config.customerId },
+    cache: "no-store",
+  });
+  const body = await upstream.text();
+  return new Response(body, {
+    status: upstream.status,
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+  });
+}
+
 /**
  * 转发客户消息。
  *

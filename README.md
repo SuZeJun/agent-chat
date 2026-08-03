@@ -76,12 +76,13 @@ POST /api/v1/admin/knowledge-bases
 POST /api/v1/admin/knowledge-bases/{knowledgeBaseId}/faq-imports
 GET  /api/v1/admin/knowledge-bases/{knowledgeBaseId}/faq-imports/{importId}
 POST /api/v1/conversations
+GET  /api/v1/conversations/{conversationId}/messages
 POST /api/v1/conversations/{conversationId}/messages
 GET  /api/v1/agent-runs/{runId}/events
 GET  /api/v1/admin/agent-runs/{runId}
 ```
 
-FAQ 导入接口使用 `multipart/form-data` 的 `file` 字段。同一知识库重复上传规范化内容相同的 CSV 会返回原 `importId`，不会重复创建文档、版本或 Job。SSE 使用持久化 `sequence` 作为 `id`，客户端可通过 `Last-Event-ID` 断线续传。
+FAQ 导入接口使用 `multipart/form-data` 的 `file` 字段。同一知识库重复上传规范化内容相同的 CSV 会返回原 `importId`，不会重复创建文档、版本或 Job。会话历史接口按 `before` 游标分页，并返回 Assistant Message 关联的 Answerability、引用和 Run 状态快照。SSE 使用持久化 `sequence` 作为 `id`，客户端可通过 `Last-Event-ID` 断线续传。
 
 ## Windows PowerShell
 

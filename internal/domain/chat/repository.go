@@ -8,6 +8,8 @@ type Repository interface {
 	CreateConversation(context.Context, Conversation) error
 	// StartRun 原子创建客户消息、Agent Run、首事件和持久化 Job。
 	StartRun(context.Context, StartRunSubmission) (StartRunResult, error)
+	// LoadMessageHistory 在客户授权范围内读取一页会话消息和关联 Run 结果。
+	LoadMessageHistory(context.Context, MessageHistoryQuery) (MessageHistoryPage, error)
 	// BeginRunAttempt 锁定 Run 并记录一次 Worker 执行开始。
 	BeginRunAttempt(context.Context, BeginRunAttempt) (RunSource, error)
 	// CompleteRun 原子保存回答、Graph Result、事件并结束 Run。

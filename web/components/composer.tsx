@@ -43,6 +43,7 @@ export function Composer({
     >
       <textarea
         value={draft}
+        disabled={disabled}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={handleKeyDown}
         rows={1}

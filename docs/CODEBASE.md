@@ -109,6 +109,8 @@ internal/agent/tool/ticket.go
 | `internal/transport/http/router.go` | 创建 Gin Router，注册存活和就绪检查 |
 | `internal/transport/http/middleware.go` | 生成 request ID、记录访问日志并恢复 panic |
 | `internal/transport/http/router_test.go` | 验证健康检查、request ID 和 panic 日志安全 |
+| `internal/transport/http/chat_handler.go` | 创建会话、发送消息、按客户分页恢复历史及输出 Run SSE |
+| `internal/transport/http/chat_handler_test.go` | 验证历史作用域、分页参数、Run Result DTO 与聊天接口 |
 | `internal/transport/http/ticket_handler.go` | 查询、确认和取消客户所属的工单审批 |
 | `internal/transport/http/ticket_handler_test.go` | 验证异步确认、完成查询和过期错误映射 |
 
@@ -137,6 +139,7 @@ internal/agent/tool/ticket.go
 | --- | --- |
 | `internal/domain/chat/doc.go` | Chat Domain 包职责说明 |
 | `internal/domain/chat/model.go` | 定义会话、消息、Agent Run、运行事件、状态和原子提交契约 |
+| `internal/domain/chat/history.go` | 定义客户作用域历史查询、消息与 Run 恢复快照及分页契约 |
 | `internal/domain/chat/repository.go` | 定义会话创建和消息启动 Run 的持久化 Port |
 | `internal/domain/chat/model_test.go` | 验证聊天状态、关联 ID 和初始事件约束 |
 
@@ -176,6 +179,7 @@ internal/agent/tool/ticket.go
 | `internal/application/chat/service_test.go` | 验证提交构造、幂等结果、请求校验和稳定错误映射 |
 | `internal/application/chat/executor.go` | 编排持久化 Agent Run 尝试、RAG Graph、失败分类和终态提交 |
 | `internal/application/chat/executor_test.go` | 验证成功事件、终态重放、重试耗尽和人工接管保护 |
+| `internal/application/chat/history.go` | 校验客户作用域并读取可恢复 Answerability 与引用的消息历史 |
 | `internal/application/chat/conversation.go` | 创建绑定当前客户和知识库的 AI 会话 |
 | `internal/application/chat/events.go` | 在客户范围内增量读取 Run Event |
 | `internal/application/chat/trace.go` | 读取管理员可见的脱敏 Run Trace |
@@ -228,6 +232,8 @@ internal/agent/tool/ticket.go
 | `internal/infrastructure/persistence/chat/repository_integration_test.go` | 使用真实 PostgreSQL 验证幂等、客户隔离、并发去重和整笔回滚 |
 | `internal/infrastructure/persistence/chat/execution.go` | 原子管理 Run 尝试、Assistant Message、Graph Result、事件和失败终态 |
 | `internal/infrastructure/persistence/chat/execution_integration_test.go` | 使用真实 PostgreSQL 验证完成、重试、终止、重放和人工接管 |
+| `internal/infrastructure/persistence/chat/history.go` | 分页读取消息与 Run Result，并为规划节点截取源消息之前的历史 |
+| `internal/infrastructure/persistence/chat/history_integration_test.go` | 真库验证客户隔离、游标分页、结果恢复与重试历史边界 |
 | `internal/infrastructure/persistence/chat/events.go` | 按客户范围和 sequence 查询 SSE 事件 |
 | `internal/infrastructure/persistence/chat/trace.go` | 查询 Run 关联 ID、Graph Result 和节点 Trace |
 

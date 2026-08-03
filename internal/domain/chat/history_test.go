@@ -1,0 +1,80 @@
+package chat
+
+import (
+	"testing"
+	"time"
+)
+
+func TestMessageHistoryItemValidatesRunRelationship(t *testing.T) {
+	now := time.Now().UTC()
+	item := MessageHistoryItem{
+		Message: Message{
+			ID:             "assistant-1",
+			ConversationID: "conversation-1",
+			AgentRunID:     "run-1",
+			Role:           MessageRoleAssistant,
+			Content:        "请确认工单草稿",
+			CreatedAt:      now,
+		},
+		RunID:     "run-1",
+		RunStatus: RunStatusCompleted,
+		RunResult: map[string]any{"nextAction": "confirm_ticket"},
+	}
+	if err := item.Validate(); err != nil {
+		t.Fatalf("valid item rejected: %v", err)
+	}
+
+	item.RunID = "run-2"
+	if err := item.Validate(); err == nil {
+		t.Fatal("assistant item accepted a mismatched Run")
+	}
+}
+
+func TestRunSourceRejectsHistoryOutsideSourceBoundary(t *testing.T) {
+	now := time.Now().UTC()
+	source := RunSource{
+		Run: AgentRun{
+			ID:              "run-2",
+			RequestID:       "request-2",
+			ConversationID:  "conversation-1",
+			SourceMessageID: "message-2",
+			Status:          RunStatusRunning,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		},
+		Message: Message{
+			ID:              "message-2",
+			ConversationID:  "conversation-1",
+			ClientMessageID: "client-2",
+			Role:            MessageRoleCustomer,
+			Content:         "帮我建个工单",
+			CreatedAt:       now,
+		},
+		History: []Message{
+			{
+				ID:              "message-1",
+				ConversationID:  "conversation-1",
+				ClientMessageID: "client-1",
+				Role:            MessageRoleCustomer,
+				Content:         "账单导出一直没有反应",
+				CreatedAt:       now.Add(-time.Minute),
+			},
+		},
+		KnowledgeBaseID: "base-1",
+		CustomerID:      "customer-1",
+		Conversation:    ConversationStatusAIActive,
+	}
+	if err := source.Validate(); err != nil {
+		t.Fatalf("valid history rejected: %v", err)
+	}
+
+	source.History[0].ConversationID = "conversation-2"
+	if err := source.Validate(); err == nil {
+		t.Fatal("cross-conversation history was accepted")
+	}
+	source.History[0].ConversationID = "conversation-1"
+	source.History[0].CreatedAt = now.Add(time.Second)
+	if err := source.Validate(); err == nil {
+		t.Fatal("future history was accepted")
+	}
+}

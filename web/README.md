@@ -12,11 +12,12 @@
            （注入 X-Customer-ID）
 ```
 
-对应的三个转发端点：
+对应的四个转发端点：
 
 | 前端路由 | 后端端点 |
 | --- | --- |
 | `POST /api/conversations` | `POST /api/v1/conversations` |
+| `GET /api/conversations/{id}/messages` | 同名历史分页端点 |
 | `POST /api/conversations/{id}/messages` | 同名客户端点 |
 | `GET /api/agent-runs/{runId}/events` | 同名 SSE 端点（流式透传） |
 
@@ -36,5 +37,7 @@ npm run dev
 ## 当前限制
 
 - 知识库由配置绑定，页面不提供选择器。
-- 消息只存在于前端状态，刷新页面会开始新会话；后端尚无读取会话历史的接口。
 - 回答一次性返回。SSE 事件契约已按增量设计，后端接入流式生成后无需改动前端。
+
+浏览器按知识库将当前会话 ID 保存到 `localStorage`。刷新时只读取历史；若存在
+`pending` 或 `running` Run，页面按 `runId` 恢复每个 SSE 订阅，不会重新发送消息或创建新 Run。

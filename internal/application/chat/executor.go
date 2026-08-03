@@ -33,6 +33,10 @@ type RunRepository interface {
 // 保持可执行状态。过期后需要重新发起，而不是自动延长。
 const approvalWindow = 30 * time.Minute
 
+// planningHistoryMessageLimit 限制 Repository 为规划节点读取的最近消息数。
+// Graph 还会执行独立的字符预算裁剪，形成数据库读取和 Prompt 输入两道上限。
+const planningHistoryMessageLimit = 12
+
 // RuntimeFactory 按会话绑定的知识库创建隔离 RAG Runtime。
 type RuntimeFactory interface {
 	// Build 接收知识库 ID 与客户 ID：两者都是服务端从会话推导的授权作用域，
@@ -112,8 +116,9 @@ func (executor *Executor) ExecuteRun(
 
 	startedAt := executor.clock.Now().UTC()
 	source, err := executor.repository.BeginRunAttempt(ctx, domain.BeginRunAttempt{
-		RunID:   request.RunID,
-		Attempt: request.Attempt,
+		RunID:        request.RunID,
+		Attempt:      request.Attempt,
+		HistoryLimit: planningHistoryMessageLimit,
 		Event: domain.EventDraft{
 			ID:   executor.idGenerator.NewID("evt_"),
 			Type: domain.EventTypeRunStarted,
@@ -168,7 +173,10 @@ func (executor *Executor) ExecuteRun(
 
 	output, err := runtime.Run(
 		agentgraph.WithObserver(ctx, progress),
-		agentgraph.Input{Query: source.Message.Content},
+		agentgraph.Input{
+			Query:   source.Message.Content,
+			History: graphHistory(source.History),
+		},
 	)
 	// 失败时也要送出残余增量：已经产生的内容对排查有价值，重试会以
 	// run.started 为界让消费方重置，不会与新一次尝试的内容混在一起。
@@ -259,6 +267,17 @@ func (executor *Executor) ExecuteRun(
 		)
 	}
 	return nil
+}
+
+func graphHistory(messages []domain.Message) []agentgraph.HistoryTurn {
+	history := make([]agentgraph.HistoryTurn, len(messages))
+	for index, message := range messages {
+		history[index] = agentgraph.HistoryTurn{
+			Role:    string(message.Role),
+			Content: message.Content,
+		}
+	}
+	return history
 }
 
 // graphTraceSteps 将 Agent 层 Trace 映射为不依赖 Eino 的 Domain 持久化契约。

@@ -176,9 +176,10 @@ func TestTicketApprovalEvalCases(t *testing.T) {
 		t.Fatalf("read ticket approval Eval Case: %v", err)
 	}
 	var cases []struct {
-		ID       string       `json:"id"`
-		Query    string       `json:"query"`
-		Draft    ticket.Draft `json:"draft"`
+		ID       string        `json:"id"`
+		Query    string        `json:"query"`
+		History  []HistoryTurn `json:"history"`
+		Draft    ticket.Draft  `json:"draft"`
 		Expected struct {
 			NextAction string   `json:"nextAction"`
 			NodePath   []string `json:"nodePath"`
@@ -211,7 +212,10 @@ func TestTicketApprovalEvalCases(t *testing.T) {
 				invoker,
 			)
 
-			output, err := runtime.Invoke(context.Background(), Input{Query: evalCase.Query})
+			output, err := runtime.Invoke(context.Background(), Input{
+				Query:   evalCase.Query,
+				History: evalCase.History,
+			})
 			if err != nil {
 				t.Fatalf("Invoke returned error: %v", err)
 			}
@@ -227,7 +231,39 @@ func TestTicketApprovalEvalCases(t *testing.T) {
 			if chatModel.calls != 0 {
 				t.Fatalf("approval branch called chat model %d times", chatModel.calls)
 			}
+			if len(evalCase.History) > 0 {
+				if planner.calls != 1 || len(planner.messages) < 2 {
+					t.Fatalf("history case did not call planner exactly once: %#v", planner)
+				}
+				prompt := planner.messages[len(planner.messages)-1].Content
+				for _, turn := range evalCase.History {
+					if !strings.Contains(prompt, turn.Content) {
+						t.Fatalf("planning prompt omitted history turn %q: %s", turn.Content, prompt)
+					}
+				}
+				if !strings.Contains(prompt, `"conversationHistory"`) {
+					t.Fatalf("planning prompt did not keep history in a data field: %s", prompt)
+				}
+			}
 		})
+	}
+}
+
+func TestNormalizeHistoryKeepsNewestTurnsWithinBudgets(t *testing.T) {
+	history := []HistoryTurn{
+		{Role: "customer", Content: "最早的问题应该被裁掉"},
+		{Role: "assistant", Content: "中间回答"},
+		{Role: "customer", Content: "最新故障详情"},
+	}
+	normalized, err := normalizeHistory(history, 2, 6)
+	if err != nil {
+		t.Fatalf("normalizeHistory returned error: %v", err)
+	}
+	if len(normalized) != 1 || normalized[0].Content != "最新故障详情" {
+		t.Fatalf("unexpected normalized history: %#v", normalized)
+	}
+	if strings.Contains(normalized[0].Content, "最早") {
+		t.Fatalf("oldest history survived the budget: %#v", normalized)
 	}
 }
 

@@ -7,12 +7,20 @@ export type RunEventType =
   | "answerability.decided"
   | "message.delta"
   | "message.citation"
+  | "approval.required"
+  | "approval.confirmed"
+  | "approval.cancelled"
+  | "approval.expired"
+  | "ticket.created"
   | "run.completed"
   | "run.failed";
 
 export type Decision = "answerable" | "needs_clarification" | "unanswerable";
 
-export type NextAction = "provide_details" | "request_human_support";
+export type NextAction =
+  | "provide_details"
+  | "request_human_support"
+  | "confirm_ticket";
 
 /** 检索证据。进入 Answerability Gate 但未必进入回答引用。 */
 export type Evidence = {
@@ -82,6 +90,22 @@ export type RunResult = {
     confidence?: number;
     evidence?: Evidence[];
   };
+};
+
+export type MessageHistoryItem = {
+  id: string;
+  role: "customer" | "assistant" | "agent" | "system";
+  content: string;
+  runId?: string;
+  runStatus?: "pending" | "running" | "completed" | "failed";
+  result?: RunResult;
+  errorCode?: string;
+  createdAt: string;
+};
+
+export type MessageHistoryResponse = {
+  items: MessageHistoryItem[];
+  nextBeforeMessageId?: string;
 };
 
 export type RunTrace = {
