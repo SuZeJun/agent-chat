@@ -2,12 +2,16 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	agenttool "agent-chat/internal/agent/tool"
+	ticket "agent-chat/internal/domain/ticket"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -118,6 +122,129 @@ func TestRuntimeRoutesToToolWhenPlannerSelectsIt(t *testing.T) {
 	if !strings.Contains(prompt, `"accountDataBelongsTo":"customer-1"`) {
 		t.Fatalf("tool result reached the prompt without its owner: %q", prompt)
 	}
+}
+
+// TestRuntimeRequestsApprovalForTicketDraft 锁定待确认分支。
+//
+// 三条不可让步的性质：草稿以结构化数据返回而非自由文本、这条路径完全不调用
+// 模型、Graph 不产生任何写入副作用。
+func TestRuntimeRequestsApprovalForTicketDraft(t *testing.T) {
+	draft := `{"title":"无法导出账单","description":"点击导出没有反应。","priority":"high"}`
+	planner := &fakePlanner{toolName: agenttool.DraftTicketToolName}
+	invoker := &fakeInvoker{result: draft}
+	chatModel := &fakeChatModel{answer: "不应被调用"}
+	runtime := newTestRuntimeWithTools(t, &fakeRetriever{}, chatModel, planner, invoker)
+
+	output, err := runtime.Invoke(context.Background(), Input{Query: "帮我建个工单"})
+	if err != nil {
+		t.Fatalf("Invoke returned error: %v", err)
+	}
+
+	expectedPath := []string{
+		nodeValidateInput,
+		nodePlanAction,
+		nodeInvokeTool,
+		nodeRequestApproval,
+	}
+	if !reflect.DeepEqual(output.NodePath, expectedPath) {
+		t.Fatalf("unexpected node path: %#v", output.NodePath)
+	}
+	// 确认提示是固定文案，安全关键内容以结构化草稿呈现。
+	if chatModel.calls != 0 {
+		t.Fatal("approval path must not call the chat model")
+	}
+	if output.TicketDraft == nil {
+		t.Fatal("approval path must return a structured draft")
+	}
+	if output.TicketDraft.Title != "无法导出账单" ||
+		output.TicketDraft.Priority != ticket.PriorityHigh {
+		t.Fatalf("unexpected draft: %#v", output.TicketDraft)
+	}
+	if output.NextAction != NextActionConfirmTicket {
+		t.Fatalf("unexpected next action: %q", output.NextAction)
+	}
+	if output.Assessment.Reason != reasonTicketDraftPrepared {
+		t.Fatalf("unexpected assessment: %#v", output.Assessment)
+	}
+}
+
+func TestTicketApprovalEvalCases(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join("testdata", "ticket_approval_cases.json"))
+	if err != nil {
+		t.Fatalf("read ticket approval Eval Case: %v", err)
+	}
+	var cases []struct {
+		ID       string       `json:"id"`
+		Query    string       `json:"query"`
+		Draft    ticket.Draft `json:"draft"`
+		Expected struct {
+			NextAction string   `json:"nextAction"`
+			NodePath   []string `json:"nodePath"`
+		} `json:"expected"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatalf("decode ticket approval Eval Case: %v", err)
+	}
+	if len(cases) == 0 {
+		t.Fatal("ticket approval Eval Case must not be empty")
+	}
+
+	for _, evalCase := range cases {
+		evalCase := evalCase
+		t.Run(evalCase.ID, func(t *testing.T) {
+			t.Parallel()
+
+			draftJSON, err := json.Marshal(evalCase.Draft)
+			if err != nil {
+				t.Fatalf("encode draft: %v", err)
+			}
+			planner := &fakePlanner{toolName: agenttool.DraftTicketToolName}
+			invoker := &fakeInvoker{result: string(draftJSON)}
+			chatModel := &fakeChatModel{answer: "不应被调用"}
+			runtime := newTestRuntimeWithTools(
+				t,
+				&fakeRetriever{},
+				chatModel,
+				planner,
+				invoker,
+			)
+
+			output, err := runtime.Invoke(context.Background(), Input{Query: evalCase.Query})
+			if err != nil {
+				t.Fatalf("Invoke returned error: %v", err)
+			}
+			if output.TicketDraft == nil || *output.TicketDraft != evalCase.Draft {
+				t.Fatalf("draft = %#v, want %#v", output.TicketDraft, evalCase.Draft)
+			}
+			if string(output.NextAction) != evalCase.Expected.NextAction {
+				t.Fatalf("next action = %q, want %q", output.NextAction, evalCase.Expected.NextAction)
+			}
+			if !reflect.DeepEqual(output.NodePath, evalCase.Expected.NodePath) {
+				t.Fatalf("node path = %#v, want %#v", output.NodePath, evalCase.Expected.NodePath)
+			}
+			if chatModel.calls != 0 {
+				t.Fatalf("approval branch called chat model %d times", chatModel.calls)
+			}
+		})
+	}
+}
+
+// TestRuntimeRejectsMalformedTicketDraft 保证残缺草稿不会进入确认界面。
+func TestRuntimeRejectsMalformedTicketDraft(t *testing.T) {
+	planner := &fakePlanner{toolName: agenttool.DraftTicketToolName}
+	invoker := &fakeInvoker{result: `{"title":"","description":"","priority":"urgent"}`}
+	runtime := newTestRuntimeWithTools(
+		t,
+		&fakeRetriever{},
+		&fakeChatModel{},
+		planner,
+		invoker,
+	)
+
+	_, err := runtime.Invoke(context.Background(), Input{Query: "帮我建个工单"})
+	assertFailure(t, err, "invalid_ticket_draft", false)
 }
 
 // TestRuntimeFallsBackToKnowledgeWhenPlannerSelectsNoTool 保证规划节点不选工具时

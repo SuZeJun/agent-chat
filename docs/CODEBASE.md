@@ -54,6 +54,18 @@ internal/transport/http/chat_handler.go
   -> internal/transport/http/chat_handler.go 的 SSE
 ```
 
+工单审批与执行链路：
+
+```text
+internal/agent/tool/ticket.go
+  -> internal/application/chat/executor.go 原子保存 Run 与审批
+  -> internal/transport/http/ticket_handler.go 确认或取消
+  -> internal/application/ticket/service.go 原子创建 ticket.create Job
+  -> internal/infrastructure/jobs/ticket_handler.go
+  -> internal/application/ticket/executor.go
+  -> internal/infrastructure/persistence/ticket/repository.go 幂等创建工单
+```
+
 阅读具体函数时，优先关注注释中的事务、幂等、权限、Answerability、引用和 Trace 约束；参数转换、简单字段映射等私有辅助函数不会为了注释而重复描述代码。
 
 ## 根目录
@@ -97,6 +109,8 @@ internal/transport/http/chat_handler.go
 | `internal/transport/http/router.go` | 创建 Gin Router，注册存活和就绪检查 |
 | `internal/transport/http/middleware.go` | 生成 request ID、记录访问日志并恢复 panic |
 | `internal/transport/http/router_test.go` | 验证健康检查、request ID 和 panic 日志安全 |
+| `internal/transport/http/ticket_handler.go` | 查询、确认和取消客户所属的工单审批 |
+| `internal/transport/http/ticket_handler_test.go` | 验证异步确认、完成查询和过期错误映射 |
 
 ## PostgreSQL Persistence
 
@@ -125,6 +139,14 @@ internal/transport/http/chat_handler.go
 | `internal/domain/chat/model.go` | 定义会话、消息、Agent Run、运行事件、状态和原子提交契约 |
 | `internal/domain/chat/repository.go` | 定义会话创建和消息启动 Run 的持久化 Port |
 | `internal/domain/chat/model_test.go` | 验证聊天状态、关联 ID 和初始事件约束 |
+
+## Ticket Domain
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/domain/ticket/model.go` | 定义草稿、审批、工单、状态机和持久化执行命令 |
+| `internal/domain/ticket/repository.go` | 定义审批确认、取消、查询和幂等建单 Port |
+| `internal/domain/ticket/model_test.go` | 验证审批终态和 Job 命令约束 |
 
 ## Knowledge Application
 
@@ -158,6 +180,14 @@ internal/transport/http/chat_handler.go
 | `internal/application/chat/events.go` | 在客户范围内增量读取 Run Event |
 | `internal/application/chat/trace.go` | 读取管理员可见的脱敏 Run Trace |
 
+## Ticket Application
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/application/ticket/service.go` | 编排客户归属校验、确认与取消，并原子创建写操作 Job |
+| `internal/application/ticket/executor.go` | 将 `ticket.create` Job 适配为可重试的幂等建单用例 |
+| `internal/application/ticket/service_test.go` | 验证异步确认、重复确认、过期和完成查询 |
+
 ## Agent Runtime
 
 | 文件 | 职责 |
@@ -174,8 +204,10 @@ internal/transport/http/chat_handler.go
 | `internal/agent/graph/prompt.go` | 构造不可信知识数据边界并校验回答来源标记 |
 | `internal/agent/graph/types.go` | 定义 Graph 输入、输出、证据、引用、配置和稳定错误 |
 | `internal/agent/graph/answerability_test.go` | 读取版本化 Eval Case 验证 Answerability 边界 |
+| `internal/agent/graph/factory_test.go` | 验证生产工具注册表包含订阅查询和工单草稿工具 |
 | `internal/agent/graph/graph_test.go` | 验证 Graph 路由、引用映射、Prompt Injection 边界和错误脱敏 |
 | `internal/agent/graph/testdata/answerability_cases.json` | 固定三类 Answerability 路由 Eval Case |
+| `internal/agent/graph/testdata/ticket_approval_cases.json` | 固定工单草稿待确认路由 Eval Case |
 
 ## Knowledge Persistence
 
@@ -199,6 +231,13 @@ internal/transport/http/chat_handler.go
 | `internal/infrastructure/persistence/chat/events.go` | 按客户范围和 sequence 查询 SSE 事件 |
 | `internal/infrastructure/persistence/chat/trace.go` | 查询 Run 关联 ID、Graph Result 和节点 Trace |
 
+## Ticket Persistence
+
+| 文件 | 职责 |
+| --- | --- |
+| `internal/infrastructure/persistence/ticket/repository.go` | 原子确认并入队，以数据库时间判过期，并由 Worker 幂等建单 |
+| `internal/infrastructure/persistence/ticket/repository_integration_test.go` | 真库验证四条审批安全属性、时钟反向路径、并发确认和 Job 重投 |
+
 ## Worker
 
 | 文件 | 职责 |
@@ -209,9 +248,11 @@ internal/transport/http/chat_handler.go
 | `internal/infrastructure/jobs/worker.go` | 管理类型分发、执行超时、有界退避和 Context 生命周期 |
 | `internal/infrastructure/jobs/knowledge_handler.go` | 校验 `knowledge.index` Payload 并适配 Application 索引用例 |
 | `internal/infrastructure/jobs/agent_run_handler.go` | 校验 `agent.run` Payload、幂等键和尝试信息并调用执行用例 |
+| `internal/infrastructure/jobs/ticket_handler.go` | 校验 `ticket.create` 稳定 Payload 并调用幂等建单用例 |
 | `internal/infrastructure/jobs/worker_test.go` | 验证成功、重试、永久失败、取消收尾和类型过滤 |
 | `internal/infrastructure/jobs/knowledge_handler_test.go` | 验证索引 Payload、幂等键和失败分类映射 |
 | `internal/infrastructure/jobs/agent_run_handler_test.go` | 验证 Run 任务分发、输入拒绝和失败分类映射 |
+| `internal/infrastructure/jobs/ticket_handler_test.go` | 验证建单任务分发、幂等键和失败分类映射 |
 | `internal/infrastructure/jobs/queue_integration_test.go` | 使用真实 PostgreSQL 验证并发领取、租约、重试上限和锁恢复 |
 
 Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDING_API_KEY` 时不注册 `knowledge.index` Handler；缺少 `LLM_API_KEY` 或 `EMBEDDING_API_KEY` 时不注册 `agent.run` Handler，已有对应任务保持 `pending`。
@@ -238,6 +279,8 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `migrations/000004_agent_run_execution.sql` | 关联 Assistant Message 与 Run，并保证每个 Run 只有一个回答 |
 | `migrations/000005_faq_imports.sql` | 创建内容幂等 FAQ Import 和逐行实体关联 |
 | `migrations/000006_agent_run_trace.sql` | 增加 Request ID 和节点/模型 Trace 表 |
+| `migrations/000007_ticket_approvals.sql` | 创建工单审批、工单记录和写操作安全约束 |
+| `migrations/000008_ticket_approval_events.sql` | 扩展审批与工单 Run Event 类型约束 |
 
 已经提交或执行的迁移文件不可直接改写；后续 Schema 变化必须新增版本文件。
 

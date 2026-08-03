@@ -89,6 +89,16 @@ const (
 	EventTypeMessageDelta EventType = "message.delta"
 	// EventTypeMessageCitation 表示回答引用。
 	EventTypeMessageCitation EventType = "message.citation"
+	// EventTypeApprovalRequired 表示结构化草稿已持久化并等待客户决策。
+	EventTypeApprovalRequired EventType = "approval.required"
+	// EventTypeApprovalConfirmed 表示客户已确认草稿，写操作 Job 已持久化。
+	EventTypeApprovalConfirmed EventType = "approval.confirmed"
+	// EventTypeApprovalCancelled 表示客户取消了待执行草稿。
+	EventTypeApprovalCancelled EventType = "approval.cancelled"
+	// EventTypeApprovalExpired 表示确认窗口已经关闭。
+	EventTypeApprovalExpired EventType = "approval.expired"
+	// EventTypeTicketCreated 表示持久化 Job 已幂等完成工单创建。
+	EventTypeTicketCreated EventType = "ticket.created"
 	// EventTypeRunCompleted 表示 Run 成功结束。
 	EventTypeRunCompleted EventType = "run.completed"
 	// EventTypeRunFailed 表示 Run 永久失败。
@@ -294,6 +304,11 @@ func (event RunEvent) Validate() error {
 		EventTypeAnswerabilityDecided,
 		EventTypeMessageDelta,
 		EventTypeMessageCitation,
+		EventTypeApprovalRequired,
+		EventTypeApprovalConfirmed,
+		EventTypeApprovalCancelled,
+		EventTypeApprovalExpired,
+		EventTypeTicketCreated,
 		EventTypeRunCompleted,
 		EventTypeRunFailed:
 	default:
@@ -443,6 +458,7 @@ type RunTraceSnapshot struct {
 	Result      map[string]any
 	ErrorCode   string
 	Steps       []RunStep
+	Events      []RunEvent
 	CreatedAt   time.Time
 	StartedAt   *time.Time
 	CompletedAt *time.Time
@@ -596,8 +612,8 @@ func (command CompleteRunCommand) Validate() error {
 		return errors.New("agent run completion event order is invalid")
 	}
 	for _, event := range command.Events[:len(command.Events)-1] {
-		if event.Type != EventTypeMessageCitation {
-			return errors.New("only citation events may precede run.completed")
+		if event.Type != EventTypeMessageCitation && event.Type != EventTypeApprovalRequired {
+			return errors.New("only citation or approval events may precede run.completed")
 		}
 	}
 	if command.CompletedAt.IsZero() {

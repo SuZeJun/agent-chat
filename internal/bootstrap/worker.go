@@ -10,13 +10,16 @@ import (
 	chatapplication "agent-chat/internal/application/chat"
 	"agent-chat/internal/application/knowledgeindex"
 	"agent-chat/internal/application/knowledgeretrieve"
+	ticketapp "agent-chat/internal/application/ticket"
 	chatdomain "agent-chat/internal/domain/chat"
 	knowledgedomain "agent-chat/internal/domain/knowledge"
+	ticketdomain "agent-chat/internal/domain/ticket"
 	crmmock "agent-chat/internal/infrastructure/crm"
 	"agent-chat/internal/infrastructure/jobs"
 	"agent-chat/internal/infrastructure/model"
 	chatpg "agent-chat/internal/infrastructure/persistence/chat"
 	knowledgepg "agent-chat/internal/infrastructure/persistence/knowledge"
+	ticketpg "agent-chat/internal/infrastructure/persistence/ticket"
 )
 
 // RunWorker 组装并运行后台 Worker，直到 Context 被取消或启动失败。
@@ -29,6 +32,16 @@ func RunWorker(ctx context.Context, output io.Writer) error {
 
 	handlers := make(map[string]jobs.Handler)
 	knowledgeRepository := knowledgepg.NewRepository(runtime.database)
+	ticketRepository := ticketpg.NewRepository(runtime.database)
+	ticketExecutor, err := ticketapp.NewCreationExecutor(ticketRepository)
+	if err != nil {
+		return err
+	}
+	ticketHandler, err := jobs.NewTicketCreateHandler(ticketExecutor)
+	if err != nil {
+		return err
+	}
+	handlers[ticketdomain.CreateJobType] = ticketHandler
 	var embedder *model.ZhipuEmbedder
 	if strings.TrimSpace(runtime.config.Models.Embedding.APIKey) != "" {
 		embedder, err = model.NewZhipuEmbedder(runtime.config.Models.Embedding)

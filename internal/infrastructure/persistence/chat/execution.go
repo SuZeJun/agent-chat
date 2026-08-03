@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	domain "agent-chat/internal/domain/chat"
+	ticketdomain "agent-chat/internal/domain/ticket"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -136,6 +137,44 @@ func (repository *Repository) CompleteRun(
 	ctx context.Context,
 	command domain.CompleteRunCommand,
 ) error {
+	return repository.completeRun(ctx, command, nil)
+}
+
+// CompleteRunWithApproval 原子保存 Run 终态与待确认草稿。
+//
+// approval.required 中展示的 ID、Graph Result 和审批记录必须属于同一事务；否则
+// 任一步失败都会留下无法确认的界面状态，或在重试后展示与执行不同的草稿。
+func (repository *Repository) CompleteRunWithApproval(
+	ctx context.Context,
+	command domain.CompleteRunCommand,
+	approval ticketdomain.Approval,
+) error {
+	if err := approval.Validate(); err != nil || approval.Status != ticketdomain.ApprovalStatusPending {
+		return fmt.Errorf("complete agent run with approval: %w", domain.ErrInvalidCommand)
+	}
+	if approval.AgentRunID != command.RunID ||
+		approval.ConversationID != command.Message.ConversationID {
+		return fmt.Errorf("complete agent run with approval: %w", domain.ErrInvalidCommand)
+	}
+	foundEvent := false
+	for _, event := range command.Events {
+		if event.Type == domain.EventTypeApprovalRequired &&
+			event.Payload["approvalId"] == approval.ID {
+			foundEvent = true
+			break
+		}
+	}
+	if !foundEvent || command.Result["approvalId"] != approval.ID {
+		return fmt.Errorf("complete agent run with approval: %w", domain.ErrInvalidCommand)
+	}
+	return repository.completeRun(ctx, command, &approval)
+}
+
+func (repository *Repository) completeRun(
+	ctx context.Context,
+	command domain.CompleteRunCommand,
+	approval *ticketdomain.Approval,
+) error {
 	if err := command.Validate(); err != nil {
 		return fmt.Errorf("complete agent run: %w: %w", domain.ErrInvalidCommand, err)
 	}
@@ -163,6 +202,41 @@ func (repository *Repository) CompleteRun(
 		source.Conversation != domain.ConversationStatusAIActive ||
 		command.Message.ConversationID != source.Run.ConversationID {
 		return fmt.Errorf("complete agent run: %w", domain.ErrInvalidState)
+	}
+	if approval != nil {
+		if approval.CustomerID != source.CustomerID {
+			return fmt.Errorf("complete agent run with approval: %w", domain.ErrInvalidState)
+		}
+		_, err = transaction.Exec(ctx, `
+			INSERT INTO ticket_approvals (
+				id,
+				conversation_id,
+				customer_id,
+				agent_run_id,
+				title,
+				description,
+				priority,
+				status,
+				idempotency_key,
+				created_at,
+				expires_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10)
+		`,
+			approval.ID,
+			approval.ConversationID,
+			approval.CustomerID,
+			approval.AgentRunID,
+			approval.Draft.Title,
+			approval.Draft.Description,
+			approval.Draft.Priority,
+			approval.IdempotencyKey,
+			approval.CreatedAt,
+			approval.ExpiresAt,
+		)
+		if err != nil {
+			return mapDatabaseError("create ticket approval with run", err)
+		}
 	}
 	if err := insertRunSteps(
 		ctx,

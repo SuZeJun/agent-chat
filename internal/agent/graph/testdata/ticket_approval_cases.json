@@ -1,0 +1,41 @@
+[
+  {
+    "id": "billing_export_high",
+    "query": "账单导出按钮一直没反应，请建一个高优先级工单。",
+    "draft": {
+      "title": "账单无法导出",
+      "description": "客户反馈账单导出按钮点击后没有反应。",
+      "priority": "high"
+    },
+    "expected": {
+      "nextAction": "confirm_ticket",
+      "nodePath": ["validate_input", "plan_action", "invoke_tool", "request_approval"]
+    }
+  },
+  {
+    "id": "api_timeout_normal",
+    "query": "API 请求持续超时，帮我提交工单。",
+    "draft": {
+      "title": "API 请求持续超时",
+      "description": "客户反馈 API 请求持续超时，需要技术支持排查。",
+      "priority": "normal"
+    },
+    "expected": {
+      "nextAction": "confirm_ticket",
+      "nodePath": ["validate_input", "plan_action", "invoke_tool", "request_approval"]
+    }
+  },
+  {
+    "id": "login_failure_low",
+    "query": "测试账号无法登录，记录一个低优先级工单。",
+    "draft": {
+      "title": "测试账号无法登录",
+      "description": "客户反馈测试账号登录失败，请协助检查账号状态。",
+      "priority": "low"
+    },
+    "expected": {
+      "nextAction": "confirm_ticket",
+      "nodePath": ["validate_input", "plan_action", "invoke_tool", "request_approval"]
+    }
+  }
+]

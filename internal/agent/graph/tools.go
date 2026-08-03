@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agenttool "agent-chat/internal/agent/tool"
+	ticket "agent-chat/internal/domain/ticket"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -203,6 +204,60 @@ func routeAction(_ context.Context, state runState) (string, error) {
 	return nodeRetrieveKnowledge, nil
 }
 
+// routeToolOutcome 在工具执行后选择待确认分支或结果解释分支。
+//
+// 工具失败时 answer 已被兜底回复填好，一律走解释分支输出该回复，不进入待确认
+// 流程——没有草稿就没有可确认的内容。
+func routeToolOutcome(_ context.Context, state runState) (string, error) {
+	if state.answer == "" &&
+		state.toolCall != nil &&
+		state.toolCall.name == agenttool.DraftTicketToolName {
+		return nodeRequestApproval, nil
+	}
+	return nodeExplainToolResult, nil
+}
+
+// 待确认提示语是固定文案。
+//
+// 草稿本身以结构化数据呈现，确认界面据此渲染标题、描述和优先级；提示语只是
+// 引导，不承载安全关键信息，因此不需要也不应该让模型生成。这条路径不调用模型。
+const ticketApprovalPrompt = "我已根据你的问题整理了工单草稿，请确认内容后我再提交。"
+
+// requestApproval 产出待客户确认的工单草稿。
+//
+// 只产出草稿，不写库：持久化属于 Application 的职责，且 Graph 需要保持可重放。
+func (deps dependencies) requestApproval(
+	ctx context.Context,
+	state runState,
+) (Output, error) {
+	state.nodePath = append(state.nodePath, nodeRequestApproval)
+
+	var draft ticket.Draft
+	if err := json.Unmarshal([]byte(state.toolResult), &draft); err != nil {
+		return Output{}, newFailure("invalid_ticket_draft", false, err)
+	}
+	// 工具已经校验过一次；此处再校验是因为草稿要跨越序列化边界，而确认界面
+	// 展示残缺草稿等于让客户在看不清内容的情况下授权写操作。
+	if err := draft.Validate(); err != nil {
+		return Output{}, newFailure("invalid_ticket_draft", false, err)
+	}
+
+	state.ticketDraft = &draft
+	state.answer = ticketApprovalPrompt
+	state.nextAction = NextActionConfirmTicket
+	state.assessment = Assessment{
+		Decision: DecisionAnswerable,
+		Reason:   reasonTicketDraftPrepared,
+		Evidence: []Evidence{},
+	}
+
+	reportToolAssessment(ctx, state.assessment)
+	if observer := ObserverFromContext(ctx); observer != nil {
+		observer.OnAnswerDelta(ctx, state.answer)
+	}
+	return state.output(), nil
+}
+
 // toolPromptInput 把问题与工具结果编码为 JSON，避免工具返回内容成为指令。
 //
 // accountDataBelongsTo 显式标明数据归属：工具永远只返回当前提问客户的数据，
@@ -246,15 +301,20 @@ func buildToolAnswerPrompt(query string, dataOwner string, toolResult string) []
 
 // buildPlanPrompt 构造工具规划提示。
 //
-// 明确要求"无法确定时不要调用工具"：错误地调用工具会让本可由知识库回答的问题
-// 走上没有证据的路径，而漏调工具只是退回知识检索，代价小得多。
+// 提示词不枚举具体工具，只描述判断原则，工具的适用场景由各自的 description
+// 承担。早期版本在此写死了订阅工具的适用条件，接入第二个工具后模型便不再调用
+// 新工具——提示词一旦携带单个工具的知识，每加一个工具都要改它。
+//
+// "无法确定时优先选择知识库"是有意的不对称：错误调用工具会让本可由知识库回答
+// 的问题走上没有证据的路径，而漏调工具只是退回知识检索，代价小得多。
 func buildPlanPrompt(query string) []*schema.Message {
 	return []*schema.Message{
 		schema.SystemMessage(
-			"你是企业客服系统的调度器。判断用户的问题是否需要调用工具获取账户数据。\n" +
-				"只有当问题明确涉及当前客户自身的订阅、套餐、额度、成员数或续费信息时，才调用工具。\n" +
-				"产品功能、操作方法、政策说明等问题不要调用工具，它们由知识库回答。\n" +
-				"无法确定时不要调用工具。不要输出任何解释性文本。",
+			"你是企业客服系统的调度器。根据可用工具的描述，判断用户的问题应当调用某个工具，" +
+				"还是交给企业知识库回答。\n" +
+				"产品功能、操作方法、政策说明等可以从文档中查到的问题，交给知识库，不要调用工具。\n" +
+				"需要读取该客户自身账户数据、或需要代客户执行某项操作的问题，调用对应工具。\n" +
+				"无法确定时优先交给知识库。不要输出任何解释性文本。",
 		),
 		schema.UserMessage(query),
 	}

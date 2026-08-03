@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	ticket "agent-chat/internal/domain/ticket"
+
 	"github.com/cloudwego/eino/components/model"
 	einoretriever "github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
@@ -47,6 +49,8 @@ const (
 	NextActionProvideDetails NextAction = "provide_details"
 	// NextActionRequestHumanSupport 提示客户端展示转人工入口。
 	NextActionRequestHumanSupport NextAction = "request_human_support"
+	// NextActionConfirmTicket 提示客户端展示工单草稿与确认、取消操作。
+	NextActionConfirmTicket NextAction = "confirm_ticket"
 )
 
 // Input 是 RAG Graph 的最小输入。
@@ -104,6 +108,11 @@ type Output struct {
 	NextAction NextAction  `json:"nextAction,omitempty"`
 	NodePath   []string    `json:"nodePath"`
 	Trace      []TraceStep `json:"trace"`
+	// TicketDraft 非空表示本次运行产出了待客户确认的工单草稿。
+	//
+	// Graph 只产出草稿而不持久化：写库属于 Application 的职责，且 Graph 需要
+	// 保持可重放——若它自己写库，重试就会留下多份记录。
+	TicketDraft *ticket.Draft `json:"ticketDraft,omitempty"`
 }
 
 // ToolCall 是一次工具调用的脱敏记录。
@@ -235,16 +244,17 @@ type dependencies struct {
 
 // runState 是单次 Graph 执行期间在节点间传递的内部状态。
 type runState struct {
-	query      string
-	sources    []source
-	assessment Assessment
-	answer     string
-	citations  []Citation
-	nextAction NextAction
-	nodePath   []string
-	toolCall   *plannedToolCall
-	toolCalls  []ToolCall
-	toolResult string
+	query       string
+	sources     []source
+	assessment  Assessment
+	answer      string
+	citations   []Citation
+	nextAction  NextAction
+	nodePath    []string
+	toolCall    *plannedToolCall
+	toolCalls   []ToolCall
+	toolResult  string
+	ticketDraft *ticket.Draft
 }
 
 // plannedToolCall 是规划节点选出的待执行工具调用。
@@ -266,13 +276,14 @@ func (state runState) output() Output {
 		citations = []Citation{}
 	}
 	return Output{
-		Answer:     state.answer,
-		Assessment: state.assessment,
-		Citations:  citations,
-		ToolCalls:  append([]ToolCall(nil), state.toolCalls...),
-		NextAction: state.nextAction,
-		NodePath:   append([]string(nil), state.nodePath...),
-		Trace:      []TraceStep{},
+		Answer:      state.answer,
+		Assessment:  state.assessment,
+		Citations:   citations,
+		ToolCalls:   append([]ToolCall(nil), state.toolCalls...),
+		NextAction:  state.nextAction,
+		NodePath:    append([]string(nil), state.nodePath...),
+		Trace:       []TraceStep{},
+		TicketDraft: state.ticketDraft,
 	}
 }
 

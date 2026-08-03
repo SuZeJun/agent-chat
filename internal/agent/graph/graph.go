@@ -17,6 +17,7 @@ const (
 	nodePlanAction        = "plan_action"
 	nodeInvokeTool        = "invoke_tool"
 	nodeExplainToolResult = "explain_tool_result"
+	nodeRequestApproval   = "request_approval"
 	nodeRetrieveKnowledge = "retrieve_knowledge"
 	nodeAnswerabilityGate = "answerability_gate"
 	nodeGroundedGenerate  = "grounded_generate"
@@ -109,6 +110,13 @@ func NewRuntime(
 		return nil, fmt.Errorf("add explain tool result node: %w", err)
 	}
 	if err := graph.AddLambdaNode(
+		nodeRequestApproval,
+		compose.InvokableLambda(deps.requestApproval),
+		compose.WithNodeName(nodeRequestApproval),
+	); err != nil {
+		return nil, fmt.Errorf("add request approval node: %w", err)
+	}
+	if err := graph.AddLambdaNode(
 		nodeRetrieveKnowledge,
 		compose.InvokableLambda(deps.retrieveKnowledge),
 		compose.WithNodeName(nodeRetrieveKnowledge),
@@ -147,9 +155,9 @@ func NewRuntime(
 	for _, edge := range [][2]string{
 		{compose.START, nodeValidateInput},
 		{nodeValidateInput, nodePlanAction},
-		{nodeInvokeTool, nodeExplainToolResult},
 		{nodeRetrieveKnowledge, nodeAnswerabilityGate},
 		{nodeExplainToolResult, compose.END},
+		{nodeRequestApproval, compose.END},
 		{nodeGroundedGenerate, compose.END},
 		{nodeAskClarification, compose.END},
 		{nodeRefuseAnswer, compose.END},
@@ -167,6 +175,16 @@ func NewRuntime(
 	)
 	if err := graph.AddBranch(nodePlanAction, actionBranch); err != nil {
 		return nil, fmt.Errorf("add action branch: %w", err)
+	}
+	toolBranch := compose.NewGraphBranch(
+		routeToolOutcome,
+		map[string]bool{
+			nodeExplainToolResult: true,
+			nodeRequestApproval:   true,
+		},
+	)
+	if err := graph.AddBranch(nodeInvokeTool, toolBranch); err != nil {
+		return nil, fmt.Errorf("add tool outcome branch: %w", err)
 	}
 	branch := compose.NewGraphBranch(
 		routeAnswerability,

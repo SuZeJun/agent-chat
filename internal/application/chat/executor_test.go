@@ -12,22 +12,25 @@ import (
 
 	agentgraph "agent-chat/internal/agent/graph"
 	domain "agent-chat/internal/domain/chat"
+	ticketdomain "agent-chat/internal/domain/ticket"
 )
 
 type fakeRunRepository struct {
-	source          domain.RunSource
-	beginCommand    domain.BeginRunAttempt
-	beginErr        error
-	progressEvents  []domain.EventDraft
-	progressErr     error
-	completeCommand domain.CompleteRunCommand
-	completeErr     error
-	failureCommand  domain.RecordRunFailureCommand
-	failureErr      error
-	mutex           sync.Mutex
-	beginCalls      int
-	completeCalls   int
-	failureCalls    int
+	source                domain.RunSource
+	beginCommand          domain.BeginRunAttempt
+	beginErr              error
+	progressEvents        []domain.EventDraft
+	progressErr           error
+	completeCommand       domain.CompleteRunCommand
+	approval              *ticketdomain.Approval
+	completeErr           error
+	failureCommand        domain.RecordRunFailureCommand
+	failureErr            error
+	mutex                 sync.Mutex
+	beginCalls            int
+	completeCalls         int
+	approvalCompleteCalls int
+	failureCalls          int
 }
 
 func (repository *fakeRunRepository) AppendRunProgress(
@@ -70,6 +73,17 @@ func (repository *fakeRunRepository) CompleteRun(
 ) error {
 	repository.completeCalls++
 	repository.completeCommand = command
+	return repository.completeErr
+}
+
+func (repository *fakeRunRepository) CompleteRunWithApproval(
+	_ context.Context,
+	command domain.CompleteRunCommand,
+	approval ticketdomain.Approval,
+) error {
+	repository.approvalCompleteCalls++
+	repository.completeCommand = command
+	repository.approval = &approval
 	return repository.completeErr
 }
 
@@ -419,6 +433,99 @@ func TestExecuteRunConvergesRunWhenCompletionFails(t *testing.T) {
 				t.Fatalf("Run was not converged: %#v", repository.failureCommand)
 			}
 		})
+	}
+}
+
+func testDraftOutput() agentgraph.Output {
+	output := testGraphOutput()
+	output.TicketDraft = &ticketdomain.Draft{
+		Title:       "无法导出账单",
+		Description: "点击导出没有反应。",
+		Priority:    ticketdomain.PriorityHigh,
+	}
+	return output
+}
+
+// TestExecuteRunCompletesApprovalAtomically 锁定审批、事件与 Run 终态使用同一 Port。
+func TestExecuteRunCompletesApprovalAtomically(t *testing.T) {
+	now := time.Now().UTC()
+	repository := &fakeRunRepository{source: testRunSource(domain.RunStatusRunning, now)}
+	executor := newTestExecutor(
+		t,
+		repository,
+		&fakeRuntimeFactory{runner: &fakeGraphRunner{output: testDraftOutput()}},
+		now,
+	)
+
+	if err := executor.ExecuteRun(context.Background(), ExecuteRunRequest{
+		RunID:       "run-1",
+		Attempt:     1,
+		MaxAttempts: 5,
+	}); err != nil {
+		t.Fatalf("ExecuteRun returned error: %v", err)
+	}
+
+	if repository.approvalCompleteCalls != 1 || repository.completeCalls != 0 {
+		t.Fatalf(
+			"draft must use atomic completion: approval=%d plain=%d",
+			repository.approvalCompleteCalls,
+			repository.completeCalls,
+		)
+	}
+	if repository.approval == nil {
+		t.Fatal("atomic completion did not receive approval")
+	}
+	approval := *repository.approval
+	// 授权作用域来自持久化的会话关系，不来自模型输出。
+	if approval.CustomerID != "customer-1" || approval.AgentRunID != "run-1" {
+		t.Fatalf("approval carries the wrong scope: %#v", approval)
+	}
+	if approval.Status != ticketdomain.ApprovalStatusPending {
+		t.Fatalf("new approval must be pending: %#v", approval)
+	}
+	// 幂等键必须由 Run ID 派生：Run 是重试单位，用审批 ID 派生会让两次尝试
+	// 得到不同的键，幂等失效。
+	if approval.IdempotencyKey != ticketdomain.DeriveIdempotencyKey("run-1") {
+		t.Fatalf("idempotency key is not derived from the run: %#v", approval)
+	}
+	if !approval.ExpiresAt.After(approval.CreatedAt) {
+		t.Fatalf("approval window is not positive: %#v", approval)
+	}
+	if repository.completeCommand.Result["approvalId"] != approval.ID {
+		t.Fatalf("result and approval ID differ: %#v", repository.completeCommand.Result)
+	}
+	foundRequired := false
+	for _, event := range repository.completeCommand.Events {
+		if event.Type == domain.EventTypeApprovalRequired &&
+			event.Payload["approvalId"] == approval.ID {
+			foundRequired = true
+		}
+	}
+	if !foundRequired {
+		t.Fatalf("approval.required event is missing: %#v", repository.completeCommand.Events)
+	}
+}
+
+// TestExecuteRunSkipsApprovalWithoutDraft 保证普通问答不触碰审批表。
+func TestExecuteRunSkipsApprovalWithoutDraft(t *testing.T) {
+	now := time.Now().UTC()
+	repository := &fakeRunRepository{source: testRunSource(domain.RunStatusRunning, now)}
+	executor := newTestExecutor(
+		t,
+		repository,
+		&fakeRuntimeFactory{runner: &fakeGraphRunner{output: testGraphOutput()}},
+		now,
+	)
+
+	if err := executor.ExecuteRun(context.Background(), ExecuteRunRequest{
+		RunID:       "run-1",
+		Attempt:     1,
+		MaxAttempts: 5,
+	}); err != nil {
+		t.Fatalf("ExecuteRun returned error: %v", err)
+	}
+	if repository.approvalCompleteCalls != 0 || repository.completeCalls != 1 {
+		t.Fatal("answer without a draft used approval completion")
 	}
 }
 
