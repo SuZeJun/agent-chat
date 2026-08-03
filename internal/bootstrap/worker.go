@@ -17,6 +17,7 @@ import (
 	"agent-chat/internal/infrastructure/model"
 	chatpg "agent-chat/internal/infrastructure/persistence/chat"
 	knowledgepg "agent-chat/internal/infrastructure/persistence/knowledge"
+	ticketpg "agent-chat/internal/infrastructure/persistence/ticket"
 )
 
 // RunWorker 组装并运行后台 Worker，直到 Context 被取消或启动失败。
@@ -86,6 +87,7 @@ func RunWorker(ctx context.Context, output io.Writer) error {
 			chatapplication.UUIDGenerator{},
 			chatapplication.SystemClock{},
 			runtime.logger,
+			chatapplication.WithApprovalRecorder(ticketpg.NewRepository(runtime.database)),
 		)
 		if err != nil {
 			return err

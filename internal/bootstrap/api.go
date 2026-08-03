@@ -12,9 +12,11 @@ import (
 	chatapplication "agent-chat/internal/application/chat"
 	"agent-chat/internal/application/knowledgebase"
 	"agent-chat/internal/application/knowledgeimport"
+	ticketapp "agent-chat/internal/application/ticket"
 	knowledgedomain "agent-chat/internal/domain/knowledge"
 	chatpg "agent-chat/internal/infrastructure/persistence/chat"
 	knowledgepg "agent-chat/internal/infrastructure/persistence/knowledge"
+	ticketpg "agent-chat/internal/infrastructure/persistence/ticket"
 	httptransport "agent-chat/internal/transport/http"
 )
 
@@ -75,6 +77,14 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	ticketService, err := ticketapp.NewService(
+		ticketpg.NewRepository(runtime.database),
+		chatapplication.UUIDGenerator{},
+		chatapplication.SystemClock{},
+	)
+	if err != nil {
+		return err
+	}
 	router := httptransport.NewRouter(httptransport.RouterOptions{
 		Logger:              runtime.logger,
 		Database:            runtime.database,
@@ -86,6 +96,7 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 		Message:             messageService,
 		RunEvents:           eventService,
 		RunTrace:            traceService,
+		TicketApproval:      ticketService,
 	})
 	server := &http.Server{
 		Addr:              runtime.config.App.HTTPAddress,
