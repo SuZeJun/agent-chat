@@ -155,7 +155,9 @@ func (factory *Factory) toolOptions(
 	if err != nil {
 		return nil, err
 	}
-	registry, err := agenttool.NewRegistry(subscriptionTool)
+	// 草稿工具无需作用域绑定：它不读取任何数据，工单归属在持久化时由服务端
+	// 依据会话确定。
+	registry, err := agenttool.NewRegistry(subscriptionTool, agenttool.NewDraftTicketTool())
 	if err != nil {
 		return nil, err
 	}
