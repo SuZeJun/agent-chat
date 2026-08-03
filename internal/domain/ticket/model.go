@@ -84,9 +84,9 @@ func (priority Priority) Valid() bool {
 // 草稿必须结构化：确认界面是安全边界的一部分，用户要能清楚看到"将要发生什么"。
 // 把草稿塞进一段自由文本里，等于让模型自己描述自己要做的事。
 type Draft struct {
-	Title       string
-	Description string
-	Priority    Priority
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Priority    Priority `json:"priority"`
 }
 
 // Validate 校验草稿字段，确保进入确认界面的内容完整且长度受限。
