@@ -84,7 +84,7 @@ describe("ChatPanel history restoration", () => {
 
   it("restores with one GET, creates no Run, and subscribes every active run", async () => {
     window.localStorage.setItem("agent-chat:conversation-id:base_1", "conversation_1");
-    const fetchMock = vi.fn(async () => historyResponse());
+    const fetchMock = vi.fn<typeof fetch>(async () => historyResponse());
     vi.stubGlobal("fetch", fetchMock);
 
     render(<ChatPanel knowledgeBaseId="base_1" knowledgeBaseName="测试知识库" />);
