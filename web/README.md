@@ -39,5 +39,5 @@ npm run dev
 - 知识库由配置绑定，页面不提供选择器。
 - 回答一次性返回。SSE 事件契约已按增量设计，后端接入流式生成后无需改动前端。
 
-浏览器将当前会话 ID 保存到 `localStorage`。刷新时只读取历史；若最后一个 Run 仍为
-`pending` 或 `running`，页面恢复原 Run 的 SSE 订阅，不会重新发送消息或创建第二个 Run。
+浏览器按知识库将当前会话 ID 保存到 `localStorage`。刷新时只读取历史；若存在
+`pending` 或 `running` Run，页面按 `runId` 恢复每个 SSE 订阅，不会重新发送消息或创建新 Run。

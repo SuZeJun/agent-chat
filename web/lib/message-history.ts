@@ -12,7 +12,7 @@ export type ChatItem =
 
 export type RestoredHistory = {
   items: ChatItem[];
-  activeRunId: string | null;
+  activeRunIds: string[];
   nextBeforeMessageId?: string;
 };
 
@@ -44,7 +44,7 @@ export function restoreMessageHistory(page: MessageHistoryResponse): RestoredHis
       .map((item) => item.runId as string),
   );
   const items: ChatItem[] = [];
-  let activeRunId: string | null = null;
+  const activeRunIds: string[] = [];
 
   for (const item of page.items) {
     if (item.role === "customer") {
@@ -58,7 +58,7 @@ export function restoreMessageHistory(page: MessageHistoryResponse): RestoredHis
           id: item.runId,
           state: initialAssistantState(item.runId),
         });
-        activeRunId = item.runId;
+        activeRunIds.push(item.runId);
       } else if (item.runStatus === "failed") {
         items.push({
           kind: "assistant",
@@ -87,7 +87,7 @@ export function restoreMessageHistory(page: MessageHistoryResponse): RestoredHis
 
   return {
     items,
-    activeRunId,
+    activeRunIds,
     nextBeforeMessageId: page.nextBeforeMessageId,
   };
 }

@@ -16,7 +16,9 @@ import type {
   SendMessageResponse,
 } from "@/lib/types";
 
-const conversationStorageKey = "agent-chat:conversation-id";
+function conversationStorageKey(knowledgeBaseID: string): string {
+  return `agent-chat:conversation-id:${knowledgeBaseID}`;
+}
 
 async function readError(response: Response): Promise<string> {
   try {
@@ -45,9 +47,38 @@ async function fetchHistory(
   );
 }
 
-export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) {
+type ChatPanelProps = {
+  knowledgeBaseId: string;
+  knowledgeBaseName: string;
+};
+
+type RunSubscriptionProps = {
+  runId: string;
+  onRunEvent: (
+    runId: string,
+    updater: (state: AssistantState) => AssistantState,
+  ) => void;
+  onRunSettled: (runId: string) => void;
+};
+
+function RunSubscription({ runId, onRunEvent, onRunSettled }: RunSubscriptionProps) {
+  const handleEvent = useCallback(
+    (updater: (state: AssistantState) => AssistantState) => {
+      onRunEvent(runId, updater);
+    },
+    [onRunEvent, runId],
+  );
+  const handleSettled = useCallback(() => {
+    onRunSettled(runId);
+  }, [onRunSettled, runId]);
+
+  useRunStream(runId, handleEvent, handleSettled);
+  return null;
+}
+
+export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [activeRunIds, setActiveRunIds] = useState<string[]>([]);
   const [nextBeforeMessageId, setNextBeforeMessageId] = useState<string | undefined>();
   const [restoring, setRestoring] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -58,6 +89,7 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
   const historyViewportRef = useRef<HTMLDivElement>(null);
   const previousHistoryHeightRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const storageKey = conversationStorageKey(knowledgeBaseId);
 
   useEffect(() => {
     if (previousHistoryHeightRef.current !== null && historyViewportRef.current) {
@@ -75,9 +107,9 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
       setRestoring(true);
       setRestoreFailed(false);
       setError(null);
-      const stored = window.localStorage.getItem(conversationStorageKey);
+      const stored = window.localStorage.getItem(storageKey);
       if (!validConversationID(stored)) {
-        window.localStorage.removeItem(conversationStorageKey);
+        window.localStorage.removeItem(storageKey);
         conversationIdRef.current = null;
         if (!cancelled) {
           setRestoring(false);
@@ -87,15 +119,16 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
       const conversationID = stored.trim();
       conversationIdRef.current = conversationID;
       if (conversationID !== stored) {
-        window.localStorage.setItem(conversationStorageKey, conversationID);
+        window.localStorage.setItem(storageKey, conversationID);
       }
       try {
         const response = await fetchHistory(conversationID);
         if (response.status === 404) {
-          window.localStorage.removeItem(conversationStorageKey);
+          window.localStorage.removeItem(storageKey);
           conversationIdRef.current = null;
           if (!cancelled) {
             setItems([]);
+            setActiveRunIds([]);
             setNextBeforeMessageId(undefined);
           }
           return;
@@ -107,7 +140,7 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
         const restored = restoreMessageHistory(page);
         if (!cancelled) {
           setItems(restored.items);
-          setActiveRunId(restored.activeRunId);
+          setActiveRunIds(restored.activeRunIds);
           setNextBeforeMessageId(restored.nextBeforeMessageId);
         }
       } catch (cause) {
@@ -125,13 +158,15 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
     return () => {
       cancelled = true;
     };
-  }, [restoreVersion]);
+  }, [restoreVersion, storageKey]);
 
-  // 事件只更新最后一条助手消息：同一时刻至多存在一个进行中的 Run。
-  const updateActiveAssistant = useCallback(
-    (updater: (state: AssistantState) => AssistantState) => {
+  // 多标签页或 API 并发可能留下多个活动 Run，事件必须按 runId 定位消息。
+  const updateRunAssistant = useCallback(
+    (runId: string, updater: (state: AssistantState) => AssistantState) => {
       setItems((current) => {
-        const index = current.findLastIndex((item) => item.kind === "assistant");
+        const index = current.findIndex(
+          (item) => item.kind === "assistant" && item.state.runId === runId,
+        );
         if (index < 0) {
           return current;
         }
@@ -144,9 +179,9 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
     [],
   );
 
-  const handleSettled = useCallback(() => setActiveRunId(null), []);
-
-  useRunStream(activeRunId, updateActiveAssistant, handleSettled);
+  const handleRunSettled = useCallback((runId: string) => {
+    setActiveRunIds((current) => current.filter((candidate) => candidate !== runId));
+  }, []);
 
   const ensureConversation = useCallback(async (): Promise<string> => {
     if (conversationIdRef.current) {
@@ -158,9 +193,9 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
     }
     const conversation = (await response.json()) as CreateConversationResponse;
     conversationIdRef.current = conversation.id;
-    window.localStorage.setItem(conversationStorageKey, conversation.id);
+    window.localStorage.setItem(storageKey, conversation.id);
     return conversation.id;
-  }, []);
+  }, [storageKey]);
 
   const loadOlder = useCallback(async () => {
     const conversationID = conversationIdRef.current;
@@ -178,6 +213,9 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
       const restored = restoreMessageHistory(page);
       previousHistoryHeightRef.current = historyViewportRef.current?.scrollHeight ?? null;
       setItems((current) => [...restored.items, ...current]);
+      setActiveRunIds((current) => [
+        ...new Set([...current, ...restored.activeRunIds]),
+      ]);
       setNextBeforeMessageId(restored.nextBeforeMessageId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "读取更早消息失败");
@@ -217,7 +255,9 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
             state: initialAssistantState(message.runId),
           },
         ]);
-        setActiveRunId(message.runId);
+        setActiveRunIds((current) =>
+          current.includes(message.runId) ? current : [...current, message.runId],
+        );
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "发送失败");
       }
@@ -227,6 +267,14 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
 
   return (
     <div className="flex h-dvh flex-col">
+      {activeRunIds.map((runId) => (
+        <RunSubscription
+          key={runId}
+          runId={runId}
+          onRunEvent={updateRunAssistant}
+          onRunSettled={handleRunSettled}
+        />
+      ))}
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
         <h1 className="text-sm font-semibold">Agent Chat</h1>
         <p className="text-xs text-muted-foreground">
@@ -294,7 +342,10 @@ export function ChatPanel({ knowledgeBaseName }: { knowledgeBaseName: string }) 
         <div ref={bottomRef} />
       </div>
 
-      <Composer disabled={restoring || activeRunId !== null} onSend={send} />
+      <Composer
+        disabled={restoring || restoreFailed || activeRunIds.length > 0}
+        onSend={send}
+      />
     </div>
   );
 }

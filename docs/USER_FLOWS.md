@@ -65,7 +65,7 @@ sequenceDiagram
 1. 浏览器保存服务端返回的会话 ID。
 2. 页面刷新后按客户身份读取最近一页消息，不重新提交任何客户消息。
 3. 已完成的 Assistant Message 使用持久化 Graph Result 恢复 Answerability、证据和引用。
-4. 最后一个 Run 若为 `pending` 或 `running`，只恢复该 Run 的 SSE 订阅。
+4. 若存在 `pending` 或 `running` Run，按 `runId` 恢复每个 SSE 订阅；事件只能更新对应的助手消息。
 5. 客户随后说“帮我建个工单”时，Worker 从服务端读取该源消息之前的有限历史，规划节点据此汇总多轮故障信息。
 
 历史读取必须由 `conversation_id + customer_id` 共同限定；分页游标也必须属于同一会话。

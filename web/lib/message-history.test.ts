@@ -46,7 +46,7 @@ describe("restoreMessageHistory", () => {
       ],
     });
 
-    expect(restored.activeRunId).toBeNull();
+    expect(restored.activeRunIds).toEqual([]);
     expect(restored.items).toHaveLength(2);
     const assistant = restored.items[1];
     expect(assistant.kind).toBe("assistant");
@@ -72,9 +72,39 @@ describe("restoreMessageHistory", () => {
       nextBeforeMessageId: "message_older",
     });
 
-    expect(restored.activeRunId).toBe("run_pending");
+    expect(restored.activeRunIds).toEqual(["run_pending"]);
     expect(restored.nextBeforeMessageId).toBe("message_older");
     expect(restored.items.map((item) => item.kind)).toEqual(["customer", "assistant"]);
+  });
+
+  it("restores every active run so each one can resume independently", () => {
+    const restored = restoreMessageHistory({
+      items: [
+        {
+          id: "message_first",
+          role: "customer",
+          content: "第一个问题",
+          runId: "run_first",
+          runStatus: "running",
+          createdAt: "2026-08-04T00:00:00Z",
+        },
+        {
+          id: "message_second",
+          role: "customer",
+          content: "第二个问题",
+          runId: "run_second",
+          runStatus: "pending",
+          createdAt: "2026-08-04T00:00:01Z",
+        },
+      ],
+    });
+
+    expect(restored.activeRunIds).toEqual(["run_first", "run_second"]);
+    expect(
+      restored.items
+        .filter((item) => item.kind === "assistant")
+        .map((item) => (item.kind === "assistant" ? item.state.runId : "")),
+    ).toEqual(["run_first", "run_second"]);
   });
 
   it.each([
