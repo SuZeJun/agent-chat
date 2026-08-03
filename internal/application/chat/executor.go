@@ -11,6 +11,7 @@ import (
 
 	agentgraph "agent-chat/internal/agent/graph"
 	domain "agent-chat/internal/domain/chat"
+	ticketdomain "agent-chat/internal/domain/ticket"
 )
 
 // RunRepository 定义一次 Agent Run 执行所需的状态事务。
@@ -20,6 +21,19 @@ type RunRepository interface {
 	CompleteRun(context.Context, domain.CompleteRunCommand) error
 	RecordRunFailure(context.Context, domain.RecordRunFailureCommand) error
 }
+
+// ApprovalRecorder 定义执行器持久化工单草稿所需的最小能力。
+//
+// 未配置时 Graph 也不会产出草稿——草稿工具与该依赖在启动时一同接入或一同缺席。
+type ApprovalRecorder interface {
+	CreateApproval(ctx context.Context, approval ticketdomain.Approval) error
+}
+
+// 待确认窗口。
+//
+// 取 30 分钟：太短会让客户在阅读草稿期间失效，太长则让一个已被遗忘的授权长期
+// 保持可执行状态。过期后需要重新发起，而不是自动延长。
+const approvalWindow = 30 * time.Minute
 
 // RuntimeFactory 按会话绑定的知识库创建隔离 RAG Runtime。
 type RuntimeFactory interface {
@@ -42,6 +56,19 @@ type Executor struct {
 	idGenerator IDGenerator
 	clock       Clock
 	logger      *slog.Logger
+	approvals   ApprovalRecorder
+}
+
+// ExecutorOption 配置执行器的可选能力。
+type ExecutorOption func(*Executor)
+
+// WithApprovalRecorder 启用工单草稿的持久化。
+//
+// 与草稿工具成对接入：缺少其一时 Graph 不会产出草稿，执行器也就不会用到它。
+func WithApprovalRecorder(approvals ApprovalRecorder) ExecutorOption {
+	return func(executor *Executor) {
+		executor.approvals = approvals
+	}
 }
 
 // NewExecutor 创建 Agent Run 执行用例。
@@ -54,6 +81,7 @@ func NewExecutor(
 	idGenerator IDGenerator,
 	clock Clock,
 	logger *slog.Logger,
+	options ...ExecutorOption,
 ) (*Executor, error) {
 	if repository == nil {
 		return nil, errors.New("run repository is required")
@@ -70,13 +98,17 @@ func NewExecutor(
 	if logger == nil {
 		return nil, errors.New("run logger is required")
 	}
-	return &Executor{
+	executor := &Executor{
 		repository:  repository,
 		factory:     factory,
 		idGenerator: idGenerator,
 		clock:       clock,
 		logger:      logger,
-	}, nil
+	}
+	for _, option := range options {
+		option(executor)
+	}
+	return executor, nil
 }
 
 // ExecuteRun 执行一次持久化 Job 尝试，并保证终态结果与事件原子提交。
@@ -172,6 +204,15 @@ func (executor *Executor) ExecuteRun(
 			retryable = failure.RetryAllowed
 		}
 		return executor.failAttempt(ctx, request, code, retryable, err)
+	}
+
+	// 审批记录必须在 Run 结束之前落库。
+	//
+	// 顺序不能反：若先结束 Run 再创建审批，两者之间崩溃会让客户看到"请确认"
+	// 却没有可确认的对象。反过来先创建审批，即便随后的 CompleteRun 失败重试，
+	// agent_run_id 的唯一约束也保证不会产生第二个审批。
+	if err := executor.recordApproval(ctx, source, output); err != nil {
+		return executor.failAttempt(ctx, request, "record_ticket_approval_failed", true, err)
 	}
 
 	completedAt := executor.clock.Now().UTC()
@@ -287,6 +328,44 @@ func (executor *Executor) completionEvents(
 		CreatedAt: createdAt,
 	})
 	return events
+}
+
+// recordApproval 把 Graph 产出的工单草稿持久化为待确认审批。
+//
+// 幂等由 ticket_approvals.agent_run_id 的唯一约束保证：Run 重试时第二次插入被
+// 数据库拒绝，此处将其视为成功——审批已经存在，正是期望的状态。
+func (executor *Executor) recordApproval(
+	ctx context.Context,
+	source domain.RunSource,
+	output agentgraph.Output,
+) error {
+	if output.TicketDraft == nil {
+		return nil
+	}
+	if executor.approvals == nil {
+		// Graph 产出了草稿却无处存放，说明启动接线不一致。静默丢弃会让客户
+		// 看到"请确认"而没有可确认的对象，因此必须显式失败。
+		return errors.New("ticket draft produced without an approval recorder")
+	}
+
+	now := executor.clock.Now().UTC()
+	approval := ticketdomain.Approval{
+		ID:             executor.idGenerator.NewID("apr_"),
+		ConversationID: source.Run.ConversationID,
+		CustomerID:     source.CustomerID,
+		AgentRunID:     source.Run.ID,
+		Draft:          *output.TicketDraft,
+		Status:         ticketdomain.ApprovalStatusPending,
+		IdempotencyKey: ticketdomain.DeriveIdempotencyKey(source.Run.ID),
+		CreatedAt:      now,
+		ExpiresAt:      now.Add(approvalWindow),
+	}
+	err := executor.approvals.CreateApproval(ctx, approval)
+	if errors.Is(err, ticketdomain.ErrInvalidState) {
+		// 唯一约束冲突意味着本次 Run 的审批已由此前的尝试创建。
+		return nil
+	}
+	return err
 }
 
 // failAttempt 记录稳定错误码；仅永久错误或最后一次尝试会结束 Run。

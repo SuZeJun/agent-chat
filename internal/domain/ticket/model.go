@@ -198,12 +198,16 @@ func (ticket Ticket) Validate() error {
 	return nil
 }
 
-// DeriveIdempotencyKey 由服务端从审批身份派生幂等键。
+// DeriveIdempotencyKey 由服务端从 Agent Run 身份派生幂等键。
 //
-// 不接受客户端提供的键：客户端换一个键就能绕过幂等保护，那条安全属性也就不
-// 成立了。审批 ID 本身唯一，因此同一次审批无论重试多少次都得到同一个键。
-func DeriveIdempotencyKey(approvalID string) string {
-	sum := sha256.Sum256([]byte("ticket-approval:" + strings.TrimSpace(approvalID)))
+// 两条约束：
+//
+//   - 不接受客户端提供的键。客户端换一个键就能绕过幂等保护，那条安全属性也就
+//     不成立了。
+//   - 必须由 Run ID 而非审批 ID 派生。Run 是会重试的单位，每次尝试都会生成新的
+//     审批 ID；用审批 ID 派生会让同一次运行的两次尝试得到不同的键，幂等失效。
+func DeriveIdempotencyKey(agentRunID string) string {
+	sum := sha256.Sum256([]byte("ticket-approval:" + strings.TrimSpace(agentRunID)))
 	return hex.EncodeToString(sum[:])[:maxIDLength]
 }
 
