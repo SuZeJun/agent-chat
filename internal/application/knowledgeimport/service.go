@@ -80,7 +80,9 @@ type ImportResult struct {
 type Failure struct {
 	Code         string
 	RetryAllowed bool
-	cause        error
+	// UserMessage 只包含由确定性校验器生成、可向管理员展示的原因。
+	UserMessage string
+	cause       error
 }
 
 // Error 返回不包含 CSV 内容、数据库细节或内部路径的稳定错误码。
@@ -151,7 +153,12 @@ func (service *Service) ImportFAQs(
 
 	rows, checksum, err := parseFAQCSV(request.Content)
 	if err != nil {
-		return ImportResult{}, newFailure("invalid_faq_csv", false, err)
+		return ImportResult{}, &Failure{
+			Code:         "invalid_faq_csv",
+			RetryAllowed: false,
+			UserMessage:  err.Error(),
+			cause:        err,
+		}
 	}
 	createdAt := service.clock.Now().UTC()
 	knowledgeImport := domain.FAQImport{

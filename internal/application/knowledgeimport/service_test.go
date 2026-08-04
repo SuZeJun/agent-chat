@@ -192,7 +192,8 @@ func TestImportFAQsRejectsInvalidCSV(t *testing.T) {
 				Content:         []byte(test.content),
 			})
 			var failure *Failure
-			if !errors.As(err, &failure) || failure.Code != "invalid_faq_csv" {
+			if !errors.As(err, &failure) || failure.Code != "invalid_faq_csv" ||
+				failure.UserMessage == "" {
 				t.Fatalf("expected invalid_faq_csv, got %v", err)
 			}
 		})

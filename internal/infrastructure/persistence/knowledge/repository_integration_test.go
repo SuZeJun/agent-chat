@@ -16,6 +16,38 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestRepositoryListsKnowledgeBasesAgainstPostgres(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool := openKnowledgeTestDatabase(t, ctx, databaseURL)
+	defer pool.Close()
+	repository := NewRepository(pool)
+
+	for _, base := range []domain.Base{
+		{ID: "base-z", Name: "Zeta", Status: domain.BaseStatusDisabled},
+		{ID: "base-a", Name: "Alpha", Description: "active base", Status: domain.BaseStatusActive},
+	} {
+		if err := repository.CreateBase(ctx, base); err != nil {
+			t.Fatalf("create base %s: %v", base.ID, err)
+		}
+	}
+
+	bases, err := repository.ListBases(ctx)
+	if err != nil {
+		t.Fatalf("list bases: %v", err)
+	}
+	if len(bases) != 2 || bases[0].ID != "base-a" ||
+		bases[0].Description != "active base" ||
+		bases[1].Status != domain.BaseStatusDisabled {
+		t.Fatalf("unexpected bases: %#v", bases)
+	}
+}
+
 func TestRepositoryVersionLifecycleAgainstPostgres(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {

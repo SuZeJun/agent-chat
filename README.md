@@ -17,6 +17,7 @@
 - 服务端绑定知识库、支持 Top-K/阈值/元数据过滤的 Eino Retriever
 - `agent.run` Handler 执行 RAG Graph，并原子保存 Assistant Message、Graph Result 和有序运行事件
 - FAQ CSV 内容幂等导入、逐行索引状态查询和客户隔离的聊天/SSE API
+- FAQ 管理页、知识库切换、CSV 校验提示和索引状态自动刷新
 - Eino Callback 节点、模型耗时和 Token Trace
 - 客户作用域的订阅查询只读工具，以及只生成草稿的 `draft_ticket` 写工具
 - 持久化工单审批、过期、确认/取消、幂等 `ticket.create` Job 与结构化确认界面
@@ -76,6 +77,7 @@ question,answer,source_url
 
 ```text
 POST /api/v1/admin/knowledge-bases
+GET  /api/v1/admin/knowledge-bases
 POST /api/v1/admin/knowledge-bases/{knowledgeBaseId}/faq-imports
 GET  /api/v1/admin/knowledge-bases/{knowledgeBaseId}/faq-imports/{importId}
 POST /api/v1/conversations

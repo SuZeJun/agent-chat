@@ -9,13 +9,18 @@ import (
 )
 
 type fakeRepository struct {
-	base domain.Base
-	err  error
+	base  domain.Base
+	bases []domain.Base
+	err   error
 }
 
 func (repository *fakeRepository) CreateBase(_ context.Context, base domain.Base) error {
 	repository.base = base
 	return repository.err
+}
+
+func (repository *fakeRepository) ListBases(context.Context) ([]domain.Base, error) {
+	return repository.bases, repository.err
 }
 
 type fixedGenerator struct{}
@@ -80,5 +85,38 @@ func TestCreateKnowledgeBaseMapsErrors(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestListKnowledgeBases(t *testing.T) {
+	repository := &fakeRepository{bases: []domain.Base{
+		{ID: "kb_a", Name: "产品知识", Status: domain.BaseStatusActive},
+		{ID: "kb_b", Name: "历史知识", Status: domain.BaseStatusDisabled},
+	}}
+	service, err := NewService(repository, fixedGenerator{})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	items, err := service.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 2 || items[0].ID != "kb_a" ||
+		items[1].Status != domain.BaseStatusDisabled {
+		t.Fatalf("unexpected items: %#v", items)
+	}
+}
+
+func TestListKnowledgeBasesMapsRepositoryError(t *testing.T) {
+	service, err := NewService(&fakeRepository{err: errors.New("database unavailable")}, fixedGenerator{})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	_, err = service.List(context.Background())
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Code != "list_knowledge_bases_failed" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

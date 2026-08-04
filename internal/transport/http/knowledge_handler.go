@@ -16,9 +16,10 @@ import (
 
 const maxFAQUploadBytes = 2 << 20
 
-// KnowledgeBaseCreator 定义知识库创建 Handler 依赖的 Application 用例。
-type KnowledgeBaseCreator interface {
+// KnowledgeBaseService 定义知识库管理 Handler 依赖的 Application 用例。
+type KnowledgeBaseService interface {
 	Create(context.Context, knowledgebase.CreateRequest) (knowledgebase.CreateResult, error)
+	List(context.Context) ([]knowledgebase.ListItem, error)
 }
 
 // FAQImportService 定义 FAQ 导入和状态查询 Handler 依赖的 Application 用例。
@@ -75,12 +76,13 @@ type faqImportItemResponse struct {
 // registerKnowledgeRoutes 只注册已完成依赖组装的知识管理接口。
 func registerKnowledgeRoutes(
 	router *gin.Engine,
-	baseCreator KnowledgeBaseCreator,
+	baseService KnowledgeBaseService,
 	importService FAQImportService,
 ) {
 	admin := router.Group("/api/v1/admin")
-	if baseCreator != nil {
-		admin.POST("/knowledge-bases", createKnowledgeBaseHandler(baseCreator))
+	if baseService != nil {
+		admin.GET("/knowledge-bases", listKnowledgeBasesHandler(baseService))
+		admin.POST("/knowledge-bases", createKnowledgeBaseHandler(baseService))
 	}
 	if importService != nil {
 		admin.POST(
@@ -95,7 +97,7 @@ func registerKnowledgeRoutes(
 }
 
 // createKnowledgeBaseHandler 完成管理员身份、DTO 和 Application 错误映射。
-func createKnowledgeBaseHandler(service KnowledgeBaseCreator) gin.HandlerFunc {
+func createKnowledgeBaseHandler(service KnowledgeBaseService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		if _, ok := requireHeaderIdentity(ctx, adminIDHeader, "admin_auth_required"); !ok {
 			return
@@ -119,6 +121,30 @@ func createKnowledgeBaseHandler(service KnowledgeBaseCreator) gin.HandlerFunc {
 			Description: result.Description,
 			Status:      string(result.Status),
 		})
+	}
+}
+
+// listKnowledgeBasesHandler 返回管理员可切换的知识库摘要，不暴露数据库实体。
+func listKnowledgeBasesHandler(service KnowledgeBaseService) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if _, ok := requireHeaderIdentity(ctx, adminIDHeader, "admin_auth_required"); !ok {
+			return
+		}
+		items, err := service.List(ctx.Request.Context())
+		if err != nil {
+			writeKnowledgeBaseError(ctx, err)
+			return
+		}
+		response := make([]knowledgeBaseResponse, len(items))
+		for index, item := range items {
+			response[index] = knowledgeBaseResponse{
+				ID:          item.ID,
+				Name:        item.Name,
+				Description: item.Description,
+				Status:      string(item.Status),
+			}
+		}
+		ctx.JSON(http.StatusOK, gin.H{"items": response})
 	}
 }
 
@@ -218,6 +244,8 @@ func writeKnowledgeBaseError(ctx *gin.Context, err error) {
 		writeAPIError(ctx, http.StatusBadRequest, failure.Code, "knowledge base is invalid")
 	case "knowledge_base_conflict":
 		writeAPIError(ctx, http.StatusConflict, failure.Code, "knowledge base already exists")
+	case "list_knowledge_bases_failed":
+		writeAPIError(ctx, http.StatusServiceUnavailable, failure.Code, "knowledge bases are temporarily unavailable")
 	default:
 		writeAPIError(ctx, http.StatusServiceUnavailable, failure.Code, "knowledge base cannot be created")
 	}
@@ -232,9 +260,14 @@ func writeFAQImportError(ctx *gin.Context, err error) {
 	switch failure.Code {
 	case "invalid_knowledge_base_id",
 		"invalid_import_source_name",
-		"invalid_faq_csv",
 		"invalid_faq_import_scope":
 		writeAPIError(ctx, http.StatusBadRequest, failure.Code, "FAQ import request is invalid")
+	case "invalid_faq_csv":
+		message := "FAQ CSV format is invalid"
+		if failure.UserMessage != "" {
+			message = failure.UserMessage
+		}
+		writeAPIError(ctx, http.StatusBadRequest, failure.Code, message)
 	case "knowledge_base_not_found", "faq_import_not_found":
 		writeAPIError(ctx, http.StatusNotFound, failure.Code, "FAQ import was not found")
 	default:
