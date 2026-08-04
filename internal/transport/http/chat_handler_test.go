@@ -173,9 +173,14 @@ func TestGetMessageHistoryAPIUsesCustomerScopeAndReturnsRunResult(t *testing.T) 
 				RunID:     "run-1",
 				RunStatus: domain.RunStatusCompleted,
 				RunResult: map[string]any{
-					"assessment": map[string]any{"decision": "answerable"},
-					"citations":  []any{map[string]any{"sourceId": "S1"}},
-					"nodePath":   []any{"validate_input", "grounded_generate"},
+					"assessment":        map[string]any{"decision": "answerable"},
+					"citations":         []any{map[string]any{"sourceId": "S1"}},
+					"nextAction":        "confirm_ticket",
+					"ticketDraft":       map[string]any{"title": "登录失败", "description": "无法登录", "priority": "high"},
+					"approvalId":        "approval-1",
+					"approvalExpiresAt": now.Add(time.Hour).Format(time.RFC3339Nano),
+					"nodePath":          []any{"validate_input", "grounded_generate"},
+					"toolCalls":         []any{map[string]any{"name": "draft_ticket"}},
 				},
 			},
 		},
@@ -208,7 +213,10 @@ func TestGetMessageHistoryAPIUsesCustomerScopeAndReturnsRunResult(t *testing.T) 
 	if len(payload.Items) != 1 ||
 		payload.Items[0].RunID != "run-1" ||
 		payload.Items[0].Result["assessment"] == nil ||
+		payload.Items[0].Result["approvalId"] != "approval-1" ||
+		payload.Items[0].Result["ticketDraft"] == nil ||
 		payload.Items[0].Result["nodePath"] != nil ||
+		payload.Items[0].Result["toolCalls"] != nil ||
 		payload.NextBeforeMessageID != "message-cursor" {
 		t.Fatalf("unexpected history response: %#v", payload)
 	}

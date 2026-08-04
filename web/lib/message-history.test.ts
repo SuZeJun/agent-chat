@@ -77,6 +77,39 @@ describe("restoreMessageHistory", () => {
     expect(restored.items.map((item) => item.kind)).toEqual(["customer", "assistant"]);
   });
 
+  it("restores the persisted ticket approval instead of creating a new draft", () => {
+    const restored = restoreMessageHistory({
+      items: [
+        {
+          id: "message_assistant",
+          role: "assistant",
+          content: "工单草稿已生成，请确认。",
+          runId: "run_ticket",
+          runStatus: "completed",
+          result: {
+            nextAction: "confirm_ticket",
+            approvalId: "approval_1",
+            approvalExpiresAt: "2026-08-04T01:00:00Z",
+            ticketDraft: {
+              title: "无法导出账单",
+              description: "点击导出后没有响应。",
+              priority: "high",
+            },
+          },
+          createdAt: "2026-08-04T00:00:01Z",
+        },
+      ],
+    });
+
+    const assistant = restored.items[0];
+    expect(assistant.kind).toBe("assistant");
+    if (assistant.kind === "assistant") {
+      expect(assistant.state.approval?.approvalId).toBe("approval_1");
+      expect(assistant.state.approval?.draft.title).toBe("无法导出账单");
+    }
+    expect(restored.activeRunIds).toEqual([]);
+  });
+
   it("restores every active run so each one can resume independently", () => {
     const restored = restoreMessageHistory({
       items: [

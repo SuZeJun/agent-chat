@@ -1,5 +1,5 @@
 import { CitationList } from "@/components/citation-list";
-import type { RunTrace, RunTraceStep } from "@/lib/types";
+import type { RunEvent, RunTrace, RunTraceStep, ToolCall } from "@/lib/types";
 
 const DECISION_LABEL: Record<string, string> = {
   answerable: "可回答",
@@ -10,6 +10,15 @@ const DECISION_LABEL: Record<string, string> = {
 const NEXT_ACTION_LABEL: Record<string, string> = {
   provide_details: "请求补充信息",
   request_human_support: "建议转人工",
+  confirm_ticket: "等待确认工单草稿",
+};
+
+const APPROVAL_EVENT_LABEL: Partial<Record<RunEvent["type"], string>> = {
+  "approval.required": "等待客户确认",
+  "approval.confirmed": "客户已确认",
+  "approval.cancelled": "客户已取消",
+  "approval.expired": "确认已过期",
+  "ticket.created": "工单已创建",
 };
 
 function Section({
@@ -88,6 +97,70 @@ function StepTable({ steps }: { steps: RunTraceStep[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ToolCallTable({ calls }: { calls: ToolCall[] }) {
+  if (calls.length === 0) {
+    return <EmptyState>本次运行没有调用工具。</EmptyState>;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead className="text-muted-foreground">
+          <tr className="border-b border-border text-left">
+            <th className="py-1.5 pr-3 font-medium">工具</th>
+            <th className="py-1.5 pr-3 font-medium">状态</th>
+            <th className="py-1.5 pr-3 font-medium">错误码</th>
+            <th className="py-1.5 text-right font-medium">耗时</th>
+          </tr>
+        </thead>
+        <tbody className="font-mono">
+          {calls.map((call, index) => (
+            <tr key={`${call.name}-${index}`} className="border-b border-border/50 last:border-0">
+              <td className="py-1.5 pr-3">{call.name}</td>
+              <td className="py-1.5 pr-3">{call.status}</td>
+              <td className="py-1.5 pr-3 text-muted-foreground">
+                {call.errorCode ?? "—"}
+              </td>
+              <td className="py-1.5 text-right">{call.durationMillis} ms</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ApprovalTimeline({ events }: { events: RunEvent[] }) {
+  const approvalEvents = events.filter((event) => APPROVAL_EVENT_LABEL[event.type]);
+  if (approvalEvents.length === 0) {
+    return <EmptyState>本次运行没有人工确认记录。</EmptyState>;
+  }
+  return (
+    <ol className="space-y-2 text-xs">
+      {approvalEvents.map((event) => {
+        const approvalId = String(event.payload.approvalId ?? "");
+        const ticketNumber = String(event.payload.ticketNumber ?? "");
+        const jobId = String(event.payload.jobId ?? "");
+        return (
+          <li key={event.eventId} className="rounded-md border border-border p-2">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="font-medium">{APPROVAL_EVENT_LABEL[event.type]}</span>
+              <span className="font-mono text-muted-foreground">#{event.sequence}</span>
+              <time className="ml-auto font-mono text-muted-foreground">
+                {event.createdAt}
+              </time>
+            </div>
+            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 font-mono text-muted-foreground">
+              {approvalId ? <span>approval={approvalId}</span> : null}
+              {jobId ? <span>job={jobId}</span> : null}
+              {ticketNumber ? <span>ticket={ticketNumber}</span> : null}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -210,11 +283,11 @@ export function RunTraceView({ trace }: { trace: RunTrace }) {
       </Section>
 
       <Section title="6. 工具调用">
-        <EmptyState>工具调用将在后续阶段支持，本次运行没有相关记录。</EmptyState>
+        <ToolCallTable calls={trace.result.toolCalls ?? []} />
       </Section>
 
       <Section title="7. Interrupt、Checkpoint 与 Resume">
-        <EmptyState>人工确认流程将在后续阶段支持，本次运行没有相关记录。</EmptyState>
+        <ApprovalTimeline events={trace.events ?? []} />
       </Section>
 
       <Section title="8. 最终回答与引用">

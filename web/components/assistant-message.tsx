@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { CitationList } from "@/components/citation-list";
+import { TicketApprovalCard } from "@/components/ticket-approval-card";
 import type { AssistantState, RunStage } from "@/lib/types";
 
 /**
@@ -120,6 +121,7 @@ export function AssistantMessage({ state }: { state: AssistantState }) {
       <div className="rounded-lg border border-border bg-card p-3">
         <p className="text-sm whitespace-pre-wrap">{state.answer}</p>
         <CitationList citations={state.citations} />
+        {state.approval ? <TicketApprovalCard prompt={state.approval} /> : null}
       </div>
       <TraceLink runId={state.runId} />
     </div>

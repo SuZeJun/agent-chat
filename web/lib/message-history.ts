@@ -18,6 +18,14 @@ export type RestoredHistory = {
 
 function completedAssistant(item: MessageHistoryItem): AssistantState {
   const assessment = item.result?.assessment;
+  const approval =
+    item.result?.approvalId && item.result.ticketDraft
+      ? {
+          approvalId: item.result.approvalId,
+          draft: item.result.ticketDraft,
+          expiresAt: item.result.approvalExpiresAt,
+        }
+      : undefined;
   return {
     ...initialAssistantState(item.runId ?? item.id),
     stage: "completed",
@@ -28,6 +36,7 @@ function completedAssistant(item: MessageHistoryItem): AssistantState {
     nextAction: item.result?.nextAction,
     evidence: assessment?.evidence ?? [],
     citations: item.result?.citations ?? [],
+    approval,
   };
 }
 
