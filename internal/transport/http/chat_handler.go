@@ -81,6 +81,7 @@ type sendMessageResponse struct {
 type messageHistoryResponse struct {
 	Items               []messageHistoryItemResponse `json:"items"`
 	NextBeforeMessageID string                       `json:"nextBeforeMessageId,omitempty"`
+	ConversationStatus  string                       `json:"conversationStatus"`
 }
 
 type messageHistoryItemResponse struct {
@@ -211,6 +212,7 @@ func getMessageHistoryHandler(service MessageHistoryReader) gin.HandlerFunc {
 		ctx.JSON(http.StatusOK, messageHistoryResponse{
 			Items:               items,
 			NextBeforeMessageID: page.NextBeforeMessageID,
+			ConversationStatus:  string(page.ConversationStatus),
 		})
 	}
 }

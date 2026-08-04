@@ -12,6 +12,8 @@ import { useRunStream } from "@/lib/use-run-stream";
 import type {
   ApiErrorBody,
   AssistantState,
+  ConversationEventPage,
+  ConversationStatus,
   CreateConversationResponse,
   MessageHistoryResponse,
   SendMessageResponse,
@@ -53,6 +55,15 @@ type ChatPanelProps = {
   knowledgeBaseName: string;
 };
 
+function settledChatItems(items: ChatItem[]): ChatItem[] {
+  return items.filter(
+    (item) =>
+      item.kind !== "assistant" ||
+      item.state.stage === "completed" ||
+      item.state.stage === "failed",
+  );
+}
+
 type RunSubscriptionProps = {
   runId: string;
   onRunEvent: (
@@ -86,7 +97,9 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
   const [restoreVersion, setRestoreVersion] = useState(0);
   const [restoreFailed, setRestoreFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conversationStatus, setConversationStatus] = useState<ConversationStatus>("ai_active");
   const conversationIdRef = useRef<string | null>(null);
+  const conversationEventSequenceRef = useRef(0);
   const historyViewportRef = useRef<HTMLDivElement>(null);
   const previousHistoryHeightRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -112,12 +125,17 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
       if (!validConversationID(stored)) {
         window.localStorage.removeItem(storageKey);
         conversationIdRef.current = null;
+        conversationEventSequenceRef.current = 0;
+        setConversationStatus("ai_active");
         if (!cancelled) {
           setRestoring(false);
         }
         return;
       }
       const conversationID = stored.trim();
+      if (conversationIdRef.current !== conversationID) {
+        conversationEventSequenceRef.current = 0;
+      }
       conversationIdRef.current = conversationID;
       if (conversationID !== stored) {
         window.localStorage.setItem(storageKey, conversationID);
@@ -127,10 +145,12 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
         if (response.status === 404) {
           window.localStorage.removeItem(storageKey);
           conversationIdRef.current = null;
+          conversationEventSequenceRef.current = 0;
           if (!cancelled) {
             setItems([]);
             setActiveRunIds([]);
             setNextBeforeMessageId(undefined);
+            setConversationStatus("ai_active");
           }
           return;
         }
@@ -140,9 +160,11 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
         const page = (await response.json()) as MessageHistoryResponse;
         const restored = restoreMessageHistory(page);
         if (!cancelled) {
-          setItems(restored.items);
-          setActiveRunIds(restored.activeRunIds);
+          const status = page.conversationStatus;
+          setItems(status === "ai_active" ? restored.items : settledChatItems(restored.items));
+          setActiveRunIds(status === "ai_active" ? restored.activeRunIds : []);
           setNextBeforeMessageId(restored.nextBeforeMessageId);
+          setConversationStatus(status);
         }
       } catch (cause) {
         if (!cancelled) {
@@ -160,6 +182,52 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
       cancelled = true;
     };
   }, [restoreVersion, storageKey]);
+
+  useEffect(() => {
+    if (conversationStatus === "ai_active" || !conversationIdRef.current) {
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      const conversationID = conversationIdRef.current;
+      if (!conversationID) return;
+      try {
+        const response = await fetch(
+          `/api/conversations/${encodeURIComponent(conversationID)}/events?after=${conversationEventSequenceRef.current}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok) return;
+        const page = (await response.json()) as ConversationEventPage;
+        if (cancelled) return;
+        if (page.items.length === 0) {
+          setConversationStatus(page.status);
+          return;
+        }
+        const historyResponse = await fetchHistory(conversationID);
+        if (!historyResponse.ok || cancelled) return;
+        const historyPage = (await historyResponse.json()) as MessageHistoryResponse;
+        const restored = restoreMessageHistory(historyPage);
+        if (!cancelled) {
+          conversationEventSequenceRef.current = Math.max(
+            conversationEventSequenceRef.current,
+            ...page.items.map((event) => event.sequence),
+          );
+          setItems(settledChatItems(restored.items));
+          setActiveRunIds([]);
+          setNextBeforeMessageId(restored.nextBeforeMessageId);
+          setConversationStatus(historyPage.conversationStatus);
+        }
+      } catch {
+        // 短暂断线交给下一次轮询恢复，持久化 sequence 防止遗漏和重复。
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [conversationStatus]);
 
   // 多标签页或 API 并发可能留下多个活动 Run，事件必须按 runId 定位消息。
   const updateRunAssistant = useCallback(
@@ -194,6 +262,7 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
     }
     const conversation = (await response.json()) as CreateConversationResponse;
     conversationIdRef.current = conversation.id;
+    conversationEventSequenceRef.current = 0;
     window.localStorage.setItem(storageKey, conversation.id);
     return conversation.id;
   }, [storageKey]);
@@ -213,17 +282,20 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
       const page = (await response.json()) as MessageHistoryResponse;
       const restored = restoreMessageHistory(page);
       previousHistoryHeightRef.current = historyViewportRef.current?.scrollHeight ?? null;
-      setItems((current) => [...restored.items, ...current]);
-      setActiveRunIds((current) => [
-        ...new Set([...current, ...restored.activeRunIds]),
-      ]);
+      const olderItems = conversationStatus === "ai_active" ? restored.items : settledChatItems(restored.items);
+      setItems((current) => [...olderItems, ...current]);
+      setActiveRunIds((current) =>
+        conversationStatus === "ai_active"
+          ? [...new Set([...current, ...restored.activeRunIds])]
+          : [],
+      );
       setNextBeforeMessageId(restored.nextBeforeMessageId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "读取更早消息失败");
     } finally {
       setLoadingOlder(false);
     }
-  }, [loadingOlder, nextBeforeMessageId]);
+  }, [conversationStatus, loadingOlder, nextBeforeMessageId]);
 
   const send = useCallback(
     async (content: string) => {
@@ -236,8 +308,9 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
 
       try {
         const conversationId = await ensureConversation();
+        const path = conversationStatus === "ai_active" ? "messages" : "handoff/messages";
         const response = await fetch(
-          `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
+          `/api/conversations/${encodeURIComponent(conversationId)}/${path}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -246,6 +319,9 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
         );
         if (!response.ok) {
           throw new Error(await readError(response));
+        }
+        if (conversationStatus !== "ai_active") {
+          return;
         }
         const message = (await response.json()) as SendMessageResponse;
         setItems((current) => [
@@ -263,8 +339,36 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
         setError(cause instanceof Error ? cause.message : "发送失败");
       }
     },
-    [ensureConversation],
+    [conversationStatus, ensureConversation],
   );
+
+  const requestHuman = useCallback(async () => {
+    setError(null);
+    try {
+      const conversationID = await ensureConversation();
+      const response = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationID)}/handoff`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: "客户从聊天界面主动请求人工支持" }),
+        },
+      );
+      if (!response.ok) throw new Error(await readError(response));
+      conversationEventSequenceRef.current = 0;
+      setConversationStatus("waiting_human");
+      const historyResponse = await fetchHistory(conversationID);
+      if (historyResponse.ok) {
+        const page = (await historyResponse.json()) as MessageHistoryResponse;
+        const restored = restoreMessageHistory(page);
+        setItems(settledChatItems(restored.items));
+        setActiveRunIds([]);
+        setNextBeforeMessageId(restored.nextBeforeMessageId);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "转人工失败");
+    }
+  }, [ensureConversation]);
 
   return (
     <div className="flex h-dvh flex-col">
@@ -281,6 +385,18 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
         <p className="ml-auto text-xs text-muted-foreground">
           知识库：<span className="font-medium">{knowledgeBaseName}</span>
         </p>
+        <span className="rounded-full border px-2 py-0.5 text-xs">
+          {conversationStatus === "ai_active"
+            ? "AI 接待"
+            : conversationStatus === "waiting_human"
+              ? "等待人工"
+              : conversationStatus === "human_active"
+                ? "人工接待"
+                : "会话已结束"}
+        </span>
+        <Button size="sm" variant="outline" onClick={() => void requestHuman()} disabled={conversationStatus !== "ai_active"}>
+          转人工
+        </Button>
         <Link href="/admin/knowledge" className="text-xs underline underline-offset-4">
           管理 FAQ
         </Link>
@@ -320,9 +436,19 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
               </p>
             );
           }
+          if (item.kind === "agent") {
+            return (
+              <div key={item.id} className="flex justify-start">
+                <div className="max-w-[85%] rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+                  <p className="mb-1 text-xs font-medium text-sky-700">人工客服</p>
+                  <p className="whitespace-pre-wrap">{item.content}</p>
+                </div>
+              </div>
+            );
+          }
           return (
             <div key={item.id} className="flex justify-start">
-              <AssistantMessage state={item.state} />
+              <AssistantMessage state={item.state} onRequestHuman={() => void requestHuman()} />
             </div>
           );
         })}
@@ -347,7 +473,12 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
       </div>
 
       <Composer
-        disabled={restoring || restoreFailed || activeRunIds.length > 0}
+        disabled={
+          restoring ||
+          restoreFailed ||
+          conversationStatus === "closed" ||
+          (conversationStatus === "ai_active" && activeRunIds.length > 0)
+        }
         onSend={send}
       />
     </div>

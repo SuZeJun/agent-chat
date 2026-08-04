@@ -1,6 +1,6 @@
 # Agent Chat
 
-面向企业客服与技术支持团队的 AI 服务运营平台。当前已完成 FAQ RAG 与安全工单审批闭环，产品和架构设计见 `docs/`，代码入口和文件职责见 `docs/CODEBASE.md`。
+面向企业客服与技术支持团队的 AI 服务运营平台。当前已完成 FAQ RAG、安全工单审批和人工接管闭环，产品和架构设计见 `docs/`，代码入口和文件职责见 `docs/CODEBASE.md`。
 
 ## 当前能力
 
@@ -22,6 +22,8 @@
 - 客户作用域的订阅查询只读工具，以及只生成草稿的 `draft_ticket` 写工具
 - 持久化工单审批、过期、确认/取消、幂等 `ticket.create` Job 与结构化确认界面
 - Run Trace 中的真实工具调用、审批状态流转与工单创建事件
+- 持久化人工接管摘要、等待队列、原子认领、人工回复、恢复 AI 和会话审计事件
+- 客户聊天页转人工与客服工作台；页面按持久化 sequence 增量刷新，不因重连重复消息
 - 16 条实际执行 Eino Graph 的 pytest 离线安全评估，分数取自真实检索实测
 - 带 advisory lock、文件名和 SHA-256 校验的事务迁移
 - `/healthz` 与 `/readyz`
@@ -59,7 +61,7 @@ Worker 默认单进程串行执行任务。`WORKER_JOB_TIMEOUT` 限制单次执�
 
 ## RAG 演示 API
 
-MVP 使用 `X-Admin-ID` 和 `X-Customer-ID` 作为本地演示身份头；它们用于验证服务端资源绑定，不代表生产认证方案。
+MVP 使用 `X-Admin-ID`、`X-Customer-ID` 和 `X-Agent-ID` 作为本地演示身份头；它们用于验证服务端资源绑定，不代表生产认证方案。浏览器不直接提供这些身份，Next.js BFF 从服务端配置注入；客服工作台使用 `DEMO_AGENT_ID`。
 
 FAQ CSV 使用 UTF-8，支持以下两种表头，最多 1000 行、2 MiB：
 
@@ -93,6 +95,15 @@ GET  /api/v1/admin/agent-runs/{runId}
 GET  /api/v1/ticket-approvals/{approvalId}
 POST /api/v1/ticket-approvals/{approvalId}/confirm
 POST /api/v1/ticket-approvals/{approvalId}/cancel
+POST /api/v1/conversations/{conversationId}/handoff
+POST /api/v1/conversations/{conversationId}/handoff/messages
+GET  /api/v1/conversations/{conversationId}/events
+GET  /api/v1/agent/conversations
+GET  /api/v1/agent/conversations/{conversationId}
+POST /api/v1/agent/conversations/{conversationId}/takeover
+POST /api/v1/agent/conversations/{conversationId}/messages
+POST /api/v1/agent/conversations/{conversationId}/resume-ai
+GET  /api/v1/agent/conversations/{conversationId}/events
 ```
 
 FAQ 导入接口使用 `multipart/form-data` 的 `file` 字段。同一知识库重复上传规范化内容相同的 CSV 会返回原 `importId`，不会重复创建文档、版本或 Job。Markdown 接口接受最大 512 KiB 的 UTF-8 内容；新版本与 `knowledge.index` Job 同事务写入，索引并发布成功前保留旧活动版本。会话历史接口按 `before` 游标分页，并返回 Assistant Message 关联的 Answerability、引用和 Run 状态快照。SSE 使用持久化 `sequence` 作为 `id`，客户端可通过 `Last-Event-ID` 断线续传。
@@ -145,4 +156,5 @@ FAQ/Markdown 导入与索引（已完成）
   -> Trace 与 Eval（已完成）
   -> 只读工具（已完成）
   -> 工单草稿、人工确认与幂等执行（已完成）
+  -> 人工接管、回复与恢复 AI（已完成）
 ```

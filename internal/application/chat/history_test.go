@@ -26,6 +26,7 @@ func (repository *fakeHistoryRepository) LoadMessageHistory(
 func TestReadMessageHistoryUsesCustomerScopeAndDefaultPage(t *testing.T) {
 	now := time.Now().UTC()
 	repository := &fakeHistoryRepository{page: domain.MessageHistoryPage{
+		ConversationStatus: domain.ConversationStatusAIActive,
 		Items: []domain.MessageHistoryItem{
 			{
 				Message: domain.Message{
@@ -97,7 +98,7 @@ func TestReadMessageHistoryRejectsOutOfOrderRepositoryResult(t *testing.T) {
 		})
 	}
 	service, err := NewHistoryService(&fakeHistoryRepository{
-		page: domain.MessageHistoryPage{Items: items},
+		page: domain.MessageHistoryPage{Items: items, ConversationStatus: domain.ConversationStatusAIActive},
 	})
 	if err != nil {
 		t.Fatalf("NewHistoryService: %v", err)

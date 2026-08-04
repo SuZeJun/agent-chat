@@ -82,6 +82,13 @@ func (service *HistoryService) ReadMessageHistory(
 			}
 		}
 	}
+	if !page.ConversationStatus.Valid() {
+		return domain.MessageHistoryPage{}, newFailure(
+			"invalid_message_history_result",
+			false,
+			errors.New("message history conversation status is invalid"),
+		)
+	}
 	if page.NextBeforeMessageID != "" {
 		if len(page.NextBeforeMessageID) > maxScopedIDLength ||
 			len(page.Items) == 0 ||

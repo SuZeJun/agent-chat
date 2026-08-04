@@ -29,6 +29,7 @@ type RouterOptions struct {
 	RunTrace            RunTraceReader
 	TicketApproval      TicketApprover
 	MarkdownDocument    MarkdownDocumentService
+	Handoff             HandoffService
 }
 
 // NewRouter 创建包含中间件、存活检查和就绪检查的 Gin Engine。
@@ -74,5 +75,6 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	)
 	registerRunTraceRoute(router, options.RunTrace)
 	registerTicketRoutes(router, options.TicketApproval)
+	registerHandoffRoutes(router, options.Handoff)
 	return router
 }

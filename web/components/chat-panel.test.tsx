@@ -43,6 +43,7 @@ class FakeEventSource {
 function historyResponse() {
   return new Response(
     JSON.stringify({
+      conversationStatus: "ai_active",
       items: [
         {
           id: "message_first",
@@ -142,5 +143,55 @@ describe("ChatPanel history restoration", () => {
     expect(sendButton.disabled).toBe(true);
     fireEvent.submit(sendButton.closest("form") as HTMLFormElement);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops active AI runs after handoff and routes later messages to the human channel", async () => {
+    window.localStorage.setItem("agent-chat:conversation-id:base_1", "conversation_1");
+    vi.stubGlobal("crypto", { randomUUID: () => "client-human-message" });
+    let historyReads = 0;
+    const fetchMock: ReturnType<typeof vi.fn<typeof fetch>> = vi.fn<typeof fetch>(async (input, init): Promise<Response> => {
+      const url = String(input);
+      const method = init?.method?.toUpperCase() ?? "GET";
+      if (url.includes("/messages?limit=50")) {
+        historyReads += 1;
+        return new Response(
+          JSON.stringify({
+            conversationStatus: historyReads > 1 ? "waiting_human" : "ai_active",
+            items: historyReads > 1
+              ? [{ id: "system-handoff", role: "system", content: "已为你转接人工支持，请稍候。", createdAt: "2026-08-05T00:00:01Z" }]
+              : [{ id: "message-running", role: "customer", content: "需要帮助", runId: "run-active", runStatus: "running", createdAt: "2026-08-05T00:00:00Z" }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/handoff") && method === "POST") {
+        return new Response(JSON.stringify({ conversationId: "conversation_1", status: "waiting_human", summary: {} }), { status: 202 });
+      }
+      if (url.includes("/events?after=")) {
+        return new Response(JSON.stringify({ conversationId: "conversation_1", status: "waiting_human", items: [] }), { status: 200 });
+      }
+      if (url.endsWith("/handoff/messages") && method === "POST") {
+        return new Response(JSON.stringify({ id: "message-human", role: "customer", content: "补充信息", createdAt: "2026-08-05T00:00:02Z" }), { status: 201 });
+      }
+      throw new Error(`unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ChatPanel knowledgeBaseId="base_1" knowledgeBaseName="测试知识库" />);
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "转人工" }));
+
+    await waitFor(() => expect(screen.getByText("等待人工")).toBeTruthy());
+    await waitFor(() => expect(FakeEventSource.instances[0].readyState).toBe(FakeEventSource.CLOSED));
+    expect(screen.queryByText("正在排队…")).toBeNull();
+
+    const textarea = screen.getByLabelText("输入问题");
+    fireEvent.change(textarea, { target: { value: "补充信息" } });
+    fireEvent.submit(screen.getByRole("button", { name: "发送" }).closest("form") as HTMLFormElement);
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input, init]) =>
+        String(input).endsWith("/handoff/messages") && init?.method === "POST",
+      )).toBe(true);
+    });
   });
 });

@@ -47,7 +47,12 @@ Graph 测试同时验证非回答分支不调用模型、引用只来自回答�
 
 RAG MVP 发布门槛位于 `evals/cases/rag_mvp.json`。pytest 会启动 `cmd/rag-eval`，
 对全部 Case 真正执行 Eino Graph，并验证三类决策、稳定原因、非回答分支不调用模型，
-以及回答分支只能返回实际来源 `S1`。Runner 同时生成机器可读 JSON 和 Markdown 报告。
+回答分支只能返回实际来源 `S1`，以及不可回答分支必须给出 `request_human_support`
+策略动作。Runner 同时生成机器可读 JSON 和 Markdown 报告。
+
+人工接管的主动转接、并发认领、非负责人权限隔离、恢复 AI 和事务回滚用例位于
+`internal/infrastructure/persistence/chat/handoff_integration_test.go`，使用真实 PostgreSQL
+执行；Application、HTTP 与前端测试分别固定命令构造、身份边界和客户/客服交互。
 
 Answerability 阈值不是先验假设，而是依据真实 embedding 的余弦分布标定的。
 `evals/tools/embed_probe.py` 对同一批 FAQ 测量三种文档侧表示（仅问题、问答全文、

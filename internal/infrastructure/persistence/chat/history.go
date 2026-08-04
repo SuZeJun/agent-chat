@@ -25,12 +25,13 @@ func (repository *Repository) LoadMessageHistory(
 	}
 
 	var conversationID string
+	var conversationStatus domain.ConversationStatus
 	if err := repository.database.QueryRow(ctx, `
-		SELECT id
+		SELECT id, status
 		FROM conversations
 		WHERE id = $1
 		  AND customer_id = $2
-	`, query.ConversationID, query.CustomerID).Scan(&conversationID); err != nil {
+	`, query.ConversationID, query.CustomerID).Scan(&conversationID, &conversationStatus); err != nil {
 		return domain.MessageHistoryPage{}, mapDatabaseError("load history conversation", err)
 	}
 
@@ -117,7 +118,9 @@ func (repository *Repository) LoadMessageHistory(
 		return domain.MessageHistoryPage{}, mapDatabaseError("load message history", err)
 	}
 
-	page := domain.MessageHistoryPage{Items: items}
+	page := domain.MessageHistoryPage{
+		Items: items, ConversationStatus: conversationStatus,
+	}
 	if len(page.Items) > query.Limit {
 		page.Items = page.Items[:query.Limit]
 		page.NextBeforeMessageID = page.Items[len(page.Items)-1].Message.ID

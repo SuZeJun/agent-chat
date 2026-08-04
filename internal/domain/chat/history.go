@@ -93,4 +93,5 @@ func (item MessageHistoryItem) Validate() error {
 type MessageHistoryPage struct {
 	Items               []MessageHistoryItem
 	NextBeforeMessageID string
+	ConversationStatus  ConversationStatus
 }

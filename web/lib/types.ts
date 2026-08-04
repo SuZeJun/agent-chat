@@ -203,7 +203,77 @@ export type MessageHistoryItem = {
 export type MessageHistoryResponse = {
   items: MessageHistoryItem[];
   nextBeforeMessageId?: string;
+  conversationStatus: ConversationStatus;
 };
+
+export type ConversationStatus =
+  | "ai_active"
+  | "waiting_human"
+  | "human_active"
+  | "closed";
+
+export type HandoffCitation = {
+  sourceId: string;
+  title: string;
+  excerpt: string;
+  documentId: string;
+  versionId: string;
+};
+
+export type HandoffToolCall = {
+  name: string;
+  status: string;
+  errorCode?: string;
+};
+
+export type HandoffSummary = {
+  customerRequest: string;
+  confirmedFacts: string[];
+  unresolvedQuestions: string[];
+  riskSignals: string[];
+  citations: HandoffCitation[];
+  toolCalls: HandoffToolCall[];
+  recommendedAction: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ConversationEvent = {
+  eventId: string;
+  conversationId: string;
+  sequence: number;
+  type:
+    | "handoff.requested"
+    | "handoff.taken_over"
+    | "message.customer"
+    | "message.agent"
+    | "handoff.ai_resumed";
+  actorType: "customer" | "agent" | "system";
+  actorId?: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type ConversationEventPage = {
+  conversationId: string;
+  status: ConversationStatus;
+  assignedAgentId?: string;
+  items: ConversationEvent[];
+};
+
+export type HandoffConversation = {
+  id: string;
+  customerId: string;
+  knowledgeBaseId: string;
+  status: ConversationStatus;
+  assignedAgentId?: string;
+  lastMessageAt?: string;
+  summary: HandoffSummary;
+  messages?: MessageHistoryItem[];
+  events?: ConversationEvent[];
+};
+
+export type HandoffQueueResponse = { items: HandoffConversation[] };
 
 export type RunTrace = {
   runId: string;
