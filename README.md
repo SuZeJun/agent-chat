@@ -17,7 +17,7 @@
 - 服务端绑定知识库、支持 Top-K/阈值/元数据过滤的 Eino Retriever
 - `agent.run` Handler 执行 RAG Graph，并原子保存 Assistant Message、Graph Result 和有序运行事件
 - FAQ CSV 内容幂等导入、逐行索引状态查询和客户隔离的聊天/SSE API
-- FAQ 管理页、知识库切换、CSV 校验提示和索引状态自动刷新
+- FAQ/Markdown 管理页、知识库切换、不可变版本、失败重试和索引状态自动刷新
 - Eino Callback 节点、模型耗时和 Token Trace
 - 客户作用域的订阅查询只读工具，以及只生成草稿的 `draft_ticket` 写工具
 - 持久化工单审批、过期、确认/取消、幂等 `ticket.create` Job 与结构化确认界面
@@ -80,6 +80,11 @@ POST /api/v1/admin/knowledge-bases
 GET  /api/v1/admin/knowledge-bases
 POST /api/v1/admin/knowledge-bases/{knowledgeBaseId}/faq-imports
 GET  /api/v1/admin/knowledge-bases/{knowledgeBaseId}/faq-imports/{importId}
+GET  /api/v1/admin/knowledge-bases/{knowledgeBaseId}/documents
+POST /api/v1/admin/knowledge-bases/{knowledgeBaseId}/documents
+GET  /api/v1/admin/knowledge-bases/{knowledgeBaseId}/documents/{documentId}
+POST /api/v1/admin/knowledge-bases/{knowledgeBaseId}/documents/{documentId}/versions
+POST /api/v1/admin/knowledge-bases/{knowledgeBaseId}/documents/{documentId}/versions/{versionId}/retry
 POST /api/v1/conversations
 GET  /api/v1/conversations/{conversationId}/messages
 POST /api/v1/conversations/{conversationId}/messages
@@ -90,7 +95,7 @@ POST /api/v1/ticket-approvals/{approvalId}/confirm
 POST /api/v1/ticket-approvals/{approvalId}/cancel
 ```
 
-FAQ 导入接口使用 `multipart/form-data` 的 `file` 字段。同一知识库重复上传规范化内容相同的 CSV 会返回原 `importId`，不会重复创建文档、版本或 Job。会话历史接口按 `before` 游标分页，并返回 Assistant Message 关联的 Answerability、引用和 Run 状态快照。SSE 使用持久化 `sequence` 作为 `id`，客户端可通过 `Last-Event-ID` 断线续传。
+FAQ 导入接口使用 `multipart/form-data` 的 `file` 字段。同一知识库重复上传规范化内容相同的 CSV 会返回原 `importId`，不会重复创建文档、版本或 Job。Markdown 接口接受最大 512 KiB 的 UTF-8 内容；新版本与 `knowledge.index` Job 同事务写入，索引并发布成功前保留旧活动版本。会话历史接口按 `before` 游标分页，并返回 Assistant Message 关联的 Answerability、引用和 Run 状态快照。SSE 使用持久化 `sequence` 作为 `id`，客户端可通过 `Last-Event-ID` 断线续传。
 
 ## Windows PowerShell
 
@@ -132,7 +137,7 @@ docker compose config --quiet
 ## RAG 纵向闭环
 
 ```text
-FAQ 导入与索引（已完成）
+FAQ/Markdown 导入与索引（已完成）
   -> Eino Retriever（已完成）
   -> Eino RAG Graph（已完成）
   -> Answerability Gate（已完成）

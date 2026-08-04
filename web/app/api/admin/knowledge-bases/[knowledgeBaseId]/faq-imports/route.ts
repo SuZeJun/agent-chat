@@ -1,4 +1,5 @@
 import { importFAQs } from "@/lib/knowledge-admin-server";
+import { readBoundedRequestBody } from "@/lib/bounded-request";
 
 const maxFAQUploadBytes = 2 << 20;
 // multipart 边界和文件元数据需要少量额外空间；BFF 仍必须在解析 FormData 前限制总请求体。
@@ -17,54 +18,9 @@ function uploadTooLarge(): Response {
   );
 }
 
-async function readBoundedBody(request: Request): Promise<Uint8Array | null> {
-  const declaredLength = request.headers.get("content-length");
-  if (declaredLength !== null) {
-    const parsedLength = Number(declaredLength);
-    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0) {
-      return null;
-    }
-    if (parsedLength > maxFAQRequestBytes) {
-      return null;
-    }
-  }
-
-  if (request.body === null) {
-    return new Uint8Array();
-  }
-
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      totalBytes += value.byteLength;
-      if (totalBytes > maxFAQRequestBytes) {
-        await reader.cancel().catch(() => undefined);
-        return null;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  const body = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
-}
-
 export async function POST(request: Request, context: RouteContext) {
   const { knowledgeBaseId } = await context.params;
-  const requestBody = await readBoundedBody(request);
+  const requestBody = await readBoundedRequestBody(request, maxFAQRequestBytes);
   if (requestBody === null) {
     return uploadTooLarge();
   }
