@@ -43,6 +43,35 @@ func (repository *Repository) CreateBase(ctx context.Context, base domain.Base) 
 	return mapDatabaseError("create knowledge base", err)
 }
 
+// ListBases 按管理员可见名称稳定返回全部知识库，包括暂停检索的禁用项。
+func (repository *Repository) ListBases(ctx context.Context) ([]domain.Base, error) {
+	rows, err := repository.database.Query(ctx, `
+		SELECT id, name, description, status
+		FROM knowledge_bases
+		ORDER BY name, id
+	`)
+	if err != nil {
+		return nil, mapDatabaseError("list knowledge bases", err)
+	}
+	defer rows.Close()
+
+	bases := make([]domain.Base, 0)
+	for rows.Next() {
+		var base domain.Base
+		if err := rows.Scan(&base.ID, &base.Name, &base.Description, &base.Status); err != nil {
+			return nil, mapDatabaseError("list knowledge bases", err)
+		}
+		if err := base.Validate(); err != nil {
+			return nil, fmt.Errorf("list knowledge bases: invalid persisted base")
+		}
+		bases = append(bases, base)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapDatabaseError("list knowledge bases", err)
+	}
+	return bases, nil
+}
+
 // CreateDocument 创建尚未发布版本的逻辑文档。
 func (repository *Repository) CreateDocument(ctx context.Context, document domain.Document) error {
 	if err := document.Validate(); err != nil {

@@ -8,9 +8,10 @@ import (
 	domain "agent-chat/internal/domain/knowledge"
 )
 
-// Repository 定义创建知识库所需的持久化能力。
+// Repository 定义知识库管理用例所需的持久化能力。
 type Repository interface {
 	CreateBase(context.Context, domain.Base) error
+	ListBases(context.Context) ([]domain.Base, error)
 }
 
 // IDGenerator 生成知识库稳定 ID。
@@ -26,6 +27,14 @@ type CreateRequest struct {
 
 // CreateResult 返回新知识库的 API 可见字段。
 type CreateResult struct {
+	ID          string
+	Name        string
+	Description string
+	Status      domain.BaseStatus
+}
+
+// ListItem 是管理员切换知识库所需的安全摘要。
+type ListItem struct {
 	ID          string
 	Name        string
 	Description string
@@ -97,4 +106,28 @@ func (service *Service) Create(
 		Description: base.Description,
 		Status:      base.Status,
 	}, nil
+}
+
+// List 返回全部知识库；禁用项仍对管理员可见，但不参与在线检索。
+func (service *Service) List(ctx context.Context) ([]ListItem, error) {
+	bases, err := service.repository.ListBases(ctx)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, &Failure{Code: "list_knowledge_bases_failed", cause: err}
+	}
+	items := make([]ListItem, len(bases))
+	for index, base := range bases {
+		if err := base.Validate(); err != nil {
+			return nil, &Failure{Code: "list_knowledge_bases_failed", cause: err}
+		}
+		items[index] = ListItem{
+			ID:          base.ID,
+			Name:        base.Name,
+			Description: base.Description,
+			Status:      base.Status,
+		}
+	}
+	return items, nil
 }

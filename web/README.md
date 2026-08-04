@@ -16,6 +16,9 @@
 
 | 前端路由 | 后端端点 |
 | --- | --- |
+| `GET /api/admin/knowledge-bases` | 管理员知识库列表 |
+| `POST /api/admin/knowledge-bases/{id}/faq-imports` | FAQ CSV 导入 |
+| `GET /api/admin/knowledge-bases/{id}/faq-imports/{importId}` | 逐行索引状态 |
 | `POST /api/conversations` | `POST /api/v1/conversations` |
 | `GET /api/conversations/{id}/messages` | 同名历史分页端点 |
 | `POST /api/conversations/{id}/messages` | 同名客户端点 |
@@ -34,12 +37,12 @@ npm install
 npm run dev
 ```
 
-`KNOWLEDGE_BASE_ID` 必填：后端目前没有「列出知识库」的接口，会话绑定的知识库
-只能由配置指定。可通过 `POST /api/v1/admin/knowledge-bases` 创建后获得 ID。
+客户聊天仍要求 `KNOWLEDGE_BASE_ID`，资源作用域只能由服务端配置指定。管理员可访问
+`/admin/knowledge` 列出知识库、上传 FAQ CSV 并观察每行索引状态。
 
 ## 当前限制
 
-- 知识库由配置绑定，页面不提供选择器。
+- 客户聊天知识库由配置绑定；仅管理员知识页面提供知识库切换。
 - 回答一次性返回。SSE 事件契约已按增量设计，后端接入流式生成后无需改动前端。
 
 浏览器按知识库将当前会话 ID 保存到 `localStorage`。刷新时只读取历史；若存在

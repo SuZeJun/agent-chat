@@ -20,7 +20,7 @@ type RouterOptions struct {
 	Database            DatabaseHealth
 	DatabasePingTimeout time.Duration
 	Environment         string
-	KnowledgeBase       KnowledgeBaseCreator
+	KnowledgeBase       KnowledgeBaseService
 	FAQImport           FAQImportService
 	Conversation        ConversationCreator
 	Message             MessageSender

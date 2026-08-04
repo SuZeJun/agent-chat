@@ -64,6 +64,42 @@ export type ApiErrorBody = {
   requestId: string;
 };
 
+export type KnowledgeBase = {
+  id: string;
+  name: string;
+  description: string;
+  status: "active" | "disabled";
+};
+
+export type KnowledgeBaseListResponse = {
+  items: KnowledgeBase[];
+};
+
+export type FAQImportResult = {
+  id: string;
+  status: FAQIndexStatus;
+  totalRows: number;
+  readyRows: number;
+  failedRows: number;
+  duplicate?: boolean;
+};
+
+export type FAQIndexStatus = "pending" | "indexing" | "ready" | "failed";
+
+export type FAQImportItem = {
+  rowNumber: number;
+  documentId: string;
+  versionId: string;
+  status: FAQIndexStatus;
+  errorCode?: string;
+};
+
+export type FAQImportStatus = FAQImportResult & {
+  sourceName: string;
+  items: FAQImportItem[];
+  createdAt: string;
+};
+
 export type TicketDraft = {
   title: string;
   description: string;

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssistantMessage } from "@/components/assistant-message";
@@ -275,11 +276,14 @@ export function ChatPanel({ knowledgeBaseId, knowledgeBaseName }: ChatPanelProps
           onRunSettled={handleRunSettled}
         />
       ))}
-      <header className="flex items-center justify-between border-b border-border px-4 py-3">
+      <header className="flex items-center gap-4 border-b border-border px-4 py-3">
         <h1 className="text-sm font-semibold">Agent Chat</h1>
-        <p className="text-xs text-muted-foreground">
+        <p className="ml-auto text-xs text-muted-foreground">
           知识库：<span className="font-medium">{knowledgeBaseName}</span>
         </p>
+        <Link href="/admin/knowledge" className="text-xs underline underline-offset-4">
+          管理 FAQ
+        </Link>
       </header>
 
       <div ref={historyViewportRef} className="flex-1 space-y-4 overflow-y-auto p-4">

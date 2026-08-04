@@ -109,6 +109,8 @@ internal/agent/tool/ticket.go
 | `internal/transport/http/router.go` | 创建 Gin Router，注册存活和就绪检查 |
 | `internal/transport/http/middleware.go` | 生成 request ID、记录访问日志并恢复 panic |
 | `internal/transport/http/router_test.go` | 验证健康检查、request ID 和 panic 日志安全 |
+| `internal/transport/http/knowledge_handler.go` | 列出知识库、导入 FAQ CSV 并查询逐行索引状态 |
+| `internal/transport/http/knowledge_handler_test.go` | 验证管理员身份、知识库 DTO、上传和可读校验错误 |
 | `internal/transport/http/chat_handler.go` | 创建会话、发送消息、按客户分页恢复历史及输出 Run SSE |
 | `internal/transport/http/chat_handler_test.go` | 验证历史作用域、分页参数、Run Result DTO 与聊天接口 |
 | `internal/transport/http/ticket_handler.go` | 查询、确认和取消客户所属的工单审批 |
@@ -166,7 +168,7 @@ internal/agent/tool/ticket.go
 | `internal/application/knowledgeretrieve/service.go` | 编排问题 embedding、向量空间校验和活动切片检索 |
 | `internal/application/knowledgeretrieve/service_test.go` | 验证请求、空结果、过滤、错误分类和检索 Eval Case |
 | `internal/application/knowledgeretrieve/testdata/retrieval_cases.json` | 固定来源期望和元数据过滤检索 Eval Case |
-| `internal/application/knowledgebase/service.go` | 创建本地演示使用的 active Knowledge Base |
+| `internal/application/knowledgebase/service.go` | 创建并列出管理员可见的 Knowledge Base |
 | `internal/application/knowledgeimport/service.go` | 解析、规范化并按内容幂等导入 FAQ CSV |
 | `internal/application/knowledgeimport/service_test.go` | 验证 CSV 表头、字段、URL、大小和规范化校验和 |
 
@@ -218,8 +220,8 @@ internal/agent/tool/ticket.go
 | 文件 | 职责 |
 | --- | --- |
 | `internal/infrastructure/persistence/knowledge/doc.go` | Knowledge PostgreSQL Repository 包说明 |
-| `internal/infrastructure/persistence/knowledge/repository.go` | 实现版本与 Job 原子创建、切片替换、发布和 pgvector 检索 |
-| `internal/infrastructure/persistence/knowledge/repository_integration_test.go` | 使用真实 PostgreSQL 验证版本生命周期、原子回滚和活动版本检索 |
+| `internal/infrastructure/persistence/knowledge/repository.go` | 实现知识库列表、版本与 Job 原子创建、切片替换、发布和 pgvector 检索 |
+| `internal/infrastructure/persistence/knowledge/repository_integration_test.go` | 使用真实 PostgreSQL 验证知识库列表、版本生命周期、原子回滚和活动版本检索 |
 | `internal/infrastructure/persistence/knowledge/import.go` | 原子创建 FAQ Import、文档、版本和索引 Job，并聚合状态 |
 | `internal/infrastructure/persistence/knowledge/import_integration_test.go` | 验证重复导入、并发幂等和失败状态 |
 
@@ -305,13 +307,16 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | 文件 | 职责 |
 | --- | --- |
 | `web/components/chat-panel.tsx` | 恢复客户会话、发送消息并按 Run 独立订阅 SSE |
+| `web/components/faq-admin-panel.tsx` | 选择知识库、校验并上传 CSV，以 TanStack Table 展示逐行索引状态 |
 | `web/components/assistant-message.tsx` | 展示回答、引用、三类 Answerability 与工单审批入口 |
 | `web/components/ticket-approval-card.tsx` | 结构化展示草稿，按服务端状态确认、取消并轮询工单结果 |
 | `web/components/run-trace-view.tsx` | 展示节点、检索、Token、工具调用和审批事件时间线 |
 | `web/lib/run-events.ts` | 将有序 SSE 事件归约为可恢复的聊天状态 |
 | `web/lib/message-history.ts` | 将持久化消息与 Graph Result 恢复为聊天界面状态 |
 | `web/lib/ticket-approval-server.ts` | 注入客户身份并转发审批查询、确认与取消请求 |
+| `web/lib/knowledge-admin-server.ts` | 注入管理员身份并限时转发知识库列表、FAQ 导入和状态查询 |
 | `web/app/api/ticket-approvals/[approvalId]/` | 客户审批 BFF 路由，不接受客户端覆盖客户身份或草稿 |
+| `web/app/admin/knowledge/page.tsx` | FAQ 管理与索引状态页面 |
 
 ## 开发脚本与 CI
 

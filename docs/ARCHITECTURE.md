@@ -425,6 +425,9 @@ POST /api/v1/agent/conversations/{id}/resume-ai
 ### 8.3 管理端
 
 ```text
+GET  /api/v1/admin/knowledge-bases
+POST /api/v1/admin/knowledge-bases/{id}/faq-imports
+GET  /api/v1/admin/knowledge-bases/{id}/faq-imports/{importId}
 POST /api/v1/admin/knowledge/documents
 GET  /api/v1/admin/knowledge/documents
 GET  /api/v1/admin/agent-runs/{id}
