@@ -100,6 +100,31 @@ export type FAQImportStatus = FAQImportResult & {
   createdAt: string;
 };
 
+export type MarkdownVersion = {
+  id: string;
+  number: number;
+  status: FAQIndexStatus;
+  errorCode?: string;
+  active: boolean;
+  createdAt: string;
+  indexedAt?: string;
+};
+
+export type MarkdownDocument = {
+  id: string;
+  knowledgeBaseId: string;
+  title: string;
+  sourceUrl?: string;
+  activeVersionId?: string;
+  latestVersion: number;
+  latestContent?: string;
+  versions: MarkdownVersion[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MarkdownDocumentListResponse = { items: MarkdownDocument[] };
+
 export type TicketDraft = {
   title: string;
   description: string;

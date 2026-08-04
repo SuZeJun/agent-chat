@@ -3,6 +3,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/components/markdown-document-panel", () => ({
+  MarkdownDocumentPanel: () => null,
+}));
+
 import { FAQAdminPanel } from "@/components/faq-admin-panel";
 
 function jsonResponse(body: unknown, status = 200): Response {

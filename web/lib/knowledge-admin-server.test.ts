@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createMarkdownDocument,
+  createMarkdownVersion,
   getFAQImportStatus,
+  getMarkdownDocument,
   importFAQs,
   listKnowledgeBases,
+  listMarkdownDocuments,
+  retryMarkdownVersion,
 } from "@/lib/knowledge-admin-server";
 
 afterEach(() => {
@@ -26,6 +31,13 @@ describe("knowledge admin server proxy", () => {
     form.append("file", new Blob(["question,answer\n问题,答案"]), "faq.csv");
     await importFAQs("base /1", form);
 
+    const markdownBody = new TextEncoder().encode('{"content":"# API"}').buffer;
+    await listMarkdownDocuments("base /1");
+    await createMarkdownDocument("base /1", markdownBody);
+    await getMarkdownDocument("base /1", "doc /1");
+    await createMarkdownVersion("base /1", "doc /1", markdownBody);
+    await retryMarkdownVersion("base /1", "doc /1", "version /1");
+
     expect(String(fetchMock.mock.calls[0][0])).toBe(
       "http://api.example.test/api/v1/admin/knowledge-bases",
     );
@@ -36,6 +48,13 @@ describe("knowledge admin server proxy", () => {
     expect(fetchMock.mock.calls[2][1]?.method).toBe("POST");
     expect(fetchMock.mock.calls[2][1]?.body).toBe(form);
     expect(fetchMock.mock.calls[2][1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(String(fetchMock.mock.calls[3][0])).toContain("/base%20%2F1/documents");
+    expect(fetchMock.mock.calls[4][1]?.method).toBe("POST");
+    expect(fetchMock.mock.calls[4][1]?.body).toBe(markdownBody);
+    expect(String(fetchMock.mock.calls[5][0])).toContain("/documents/doc%20%2F1");
+    expect(String(fetchMock.mock.calls[6][0])).toContain("/documents/doc%20%2F1/versions");
+    expect(String(fetchMock.mock.calls[7][0])).toContain("/versions/version%20%2F1/retry");
+    expect(fetchMock.mock.calls[7][1]?.method).toBe("POST");
   });
 
   it("returns a stable timeout response", async () => {

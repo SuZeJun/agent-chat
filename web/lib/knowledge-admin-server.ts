@@ -68,3 +68,61 @@ export function getFAQImportStatus(
     `/api/v1/admin/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/faq-imports/${encodeURIComponent(importId)}`,
   );
 }
+
+function markdownPath(knowledgeBaseId: string, suffix = ""): string {
+  return `/api/v1/admin/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/documents${suffix}`;
+}
+
+/** listMarkdownDocuments 读取知识库内的 Markdown 文档与版本状态。 */
+export function listMarkdownDocuments(knowledgeBaseId: string): Promise<Response> {
+  return forwardKnowledgeRequest(markdownPath(knowledgeBaseId));
+}
+
+/** createMarkdownDocument 转发经过 BFF 大小限制的 JSON。 */
+export function createMarkdownDocument(
+  knowledgeBaseId: string,
+  body: ArrayBuffer,
+): Promise<Response> {
+  return forwardKnowledgeRequest(markdownPath(knowledgeBaseId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+}
+
+/** getMarkdownDocument 读取单个 Markdown 文档和最新源内容。 */
+export function getMarkdownDocument(
+  knowledgeBaseId: string,
+  documentId: string,
+): Promise<Response> {
+  return forwardKnowledgeRequest(
+    markdownPath(knowledgeBaseId, `/${encodeURIComponent(documentId)}`),
+  );
+}
+
+/** createMarkdownVersion 为既有逻辑文档创建新版本。 */
+export function createMarkdownVersion(
+  knowledgeBaseId: string,
+  documentId: string,
+  body: ArrayBuffer,
+): Promise<Response> {
+  return forwardKnowledgeRequest(
+    markdownPath(knowledgeBaseId, `/${encodeURIComponent(documentId)}/versions`),
+    { method: "POST", headers: { "Content-Type": "application/json" }, body },
+  );
+}
+
+/** retryMarkdownVersion 只重置服务端已失败的同一持久化 Job。 */
+export function retryMarkdownVersion(
+  knowledgeBaseId: string,
+  documentId: string,
+  versionId: string,
+): Promise<Response> {
+  return forwardKnowledgeRequest(
+    markdownPath(
+      knowledgeBaseId,
+      `/${encodeURIComponent(documentId)}/versions/${encodeURIComponent(versionId)}/retry`,
+    ),
+    { method: "POST" },
+  );
+}

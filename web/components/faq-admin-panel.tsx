@@ -12,6 +12,7 @@ import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
+import { MarkdownDocumentPanel } from "@/components/markdown-document-panel";
 import type {
   ApiErrorBody,
   FAQImportItem,
@@ -324,7 +325,7 @@ export function FAQAdminPanel() {
         <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
           Knowledge operations
         </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">FAQ 管理与索引状态</h1>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">知识管理与索引状态</h1>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
           选择知识库并上传 UTF-8 CSV。每一行会独立进入持久化索引任务，页面自动跟踪结果。
         </p>
@@ -511,6 +512,8 @@ export function FAQAdminPanel() {
           导入 CSV 后，这里会展示总数、成功数、失败数和每行索引状态。
         </section>
       ) : null}
+
+      <MarkdownDocumentPanel base={selectedBase} />
     </div>
   );
 }

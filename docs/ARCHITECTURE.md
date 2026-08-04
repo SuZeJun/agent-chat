@@ -428,8 +428,11 @@ POST /api/v1/agent/conversations/{id}/resume-ai
 GET  /api/v1/admin/knowledge-bases
 POST /api/v1/admin/knowledge-bases/{id}/faq-imports
 GET  /api/v1/admin/knowledge-bases/{id}/faq-imports/{importId}
-POST /api/v1/admin/knowledge/documents
-GET  /api/v1/admin/knowledge/documents
+GET  /api/v1/admin/knowledge-bases/{id}/documents
+POST /api/v1/admin/knowledge-bases/{id}/documents
+GET  /api/v1/admin/knowledge-bases/{id}/documents/{documentId}
+POST /api/v1/admin/knowledge-bases/{id}/documents/{documentId}/versions
+POST /api/v1/admin/knowledge-bases/{id}/documents/{documentId}/versions/{versionId}/retry
 GET  /api/v1/admin/agent-runs/{id}
 POST /api/v1/admin/evals/runs
 GET  /api/v1/admin/evals/runs/{id}

@@ -11,6 +11,7 @@ import (
 
 	chatapplication "agent-chat/internal/application/chat"
 	"agent-chat/internal/application/knowledgebase"
+	"agent-chat/internal/application/knowledgedocument"
 	"agent-chat/internal/application/knowledgeimport"
 	ticketapp "agent-chat/internal/application/ticket"
 	knowledgedomain "agent-chat/internal/domain/knowledge"
@@ -46,6 +47,18 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 		},
 		idGenerator,
 		knowledgeimport.SystemClock{},
+	)
+	if err != nil {
+		return err
+	}
+	markdownService, err := knowledgedocument.NewService(
+		knowledgeRepository,
+		knowledgedomain.EmbeddingIdentity{
+			Provider:   "zhipu",
+			Model:      runtime.config.Models.Embedding.Model,
+			Dimensions: runtime.config.Models.Embedding.Dimensions,
+		},
+		idGenerator,
 	)
 	if err != nil {
 		return err
@@ -96,6 +109,7 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 		Environment:         runtime.config.App.Environment,
 		KnowledgeBase:       knowledgeBaseService,
 		FAQImport:           importService,
+		MarkdownDocument:    markdownService,
 		Conversation:        conversationService,
 		Message:             messageService,
 		MessageHistory:      historyService,

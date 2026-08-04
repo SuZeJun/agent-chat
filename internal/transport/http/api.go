@@ -1,6 +1,7 @@
 package httptransport
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -55,14 +56,25 @@ func requireHeaderIdentity(
 
 // decodeJSONBody 拒绝未知字段和尾随 JSON，防止客户端拼写错误被静默忽略。
 func decodeJSONBody(ctx *gin.Context, target any) error {
-	reader := io.LimitReader(ctx.Request.Body, maxJSONBodyBytes+1)
-	decoder := json.NewDecoder(reader)
+	return decodeJSONBodyWithLimit(ctx, target, maxJSONBodyBytes)
+}
+
+// decodeJSONBodyWithLimit 在解析前限制完整 JSON 请求体，供较大的 Markdown 内容使用。
+func decodeJSONBodyWithLimit(ctx *gin.Context, target any, limit int64) error {
+	content, err := io.ReadAll(io.LimitReader(ctx.Request.Body, limit+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(content)) > limit {
+		return errors.New("request body is too large")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
 	var trailing any
-	err := decoder.Decode(&trailing)
+	err = decoder.Decode(&trailing)
 	if errors.Is(err, io.EOF) {
 		return nil
 	}
