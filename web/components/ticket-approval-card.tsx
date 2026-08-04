@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2, Loader2, TicketCheck } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import type {
@@ -15,6 +15,9 @@ const PRIORITY_LABEL: Record<TicketApprovalPrompt["draft"]["priority"], string> 
   normal: "普通",
   high: "高",
 };
+
+// 自动查询使用有限退避；耗尽后由客户手动刷新，避免 Worker 离线时永久轮询。
+const TICKET_POLL_DELAYS_MS = [1_000, 1_500, 2_500, 4_000, 6_000, 8_000, 10_000, 10_000];
 
 async function readApprovalError(response: Response): Promise<Error> {
   try {
@@ -35,23 +38,62 @@ export function TicketApprovalCard({ prompt }: { prompt: TicketApprovalPrompt })
   const [approval, setApproval] = useState<TicketApproval | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState<ApprovalAction | null>(null);
+  const [pollingStopped, setPollingStopped] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const requestSequenceRef = useRef(0);
+  const refreshControllerRef = useRef<AbortController | null>(null);
   const endpoint = `/api/ticket-approvals/${encodeURIComponent(prompt.approvalId)}`;
 
   const refresh = useCallback(async () => {
-    const response = await fetch(endpoint, { cache: "no-store" });
-    if (!response.ok) {
-      throw await readApprovalError(response);
+    const sequence = ++requestSequenceRef.current;
+    refreshControllerRef.current?.abort();
+    const controller = new AbortController();
+    refreshControllerRef.current = controller;
+    try {
+      const response = await fetch(endpoint, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw await readApprovalError(response);
+      }
+      const current = (await response.json()) as TicketApproval;
+      if (
+        !mountedRef.current ||
+        controller.signal.aborted ||
+        sequence !== requestSequenceRef.current
+      ) {
+        return null;
+      }
+      setApproval(current);
+      setError(null);
+      return current;
+    } catch (cause) {
+      if (controller.signal.aborted || sequence !== requestSequenceRef.current) {
+        return null;
+      }
+      throw cause;
+    } finally {
+      if (refreshControllerRef.current === controller) {
+        refreshControllerRef.current = null;
+      }
     }
-    const current = (await response.json()) as TicketApproval;
-    setApproval(current);
-    setError(null);
-    return current;
   }, [endpoint]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestSequenceRef.current += 1;
+      refreshControllerRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setPollingStopped(false);
     void refresh()
       .catch((cause) => {
         if (!cancelled) {
@@ -69,25 +111,61 @@ export function TicketApprovalCard({ prompt }: { prompt: TicketApprovalPrompt })
   }, [refresh]);
 
   useEffect(() => {
-    if (approval?.executionStatus !== "pending") {
+    if (approval?.executionStatus !== "pending" || pollingStopped) {
       return;
     }
-    let refreshing = false;
-    const timer = window.setInterval(() => {
-      if (refreshing) {
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempt = 0;
+    const schedule = () => {
+      if (cancelled) {
         return;
       }
-      refreshing = true;
-      void refresh()
-        .catch((cause) => {
-          setError(cause instanceof Error ? cause.message : "刷新工单状态失败");
-        })
-        .finally(() => {
-          refreshing = false;
-        });
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [approval?.executionStatus, refresh]);
+      if (attempt >= TICKET_POLL_DELAYS_MS.length) {
+        if (mountedRef.current) {
+          setPollingStopped(true);
+        }
+        return;
+      }
+      const delay = TICKET_POLL_DELAYS_MS[attempt];
+      attempt += 1;
+      timer = window.setTimeout(() => {
+        void refresh()
+          .then((current) => {
+            if (!cancelled && (!current || current.executionStatus === "pending")) {
+              schedule();
+            }
+          })
+          .catch((cause) => {
+            if (!cancelled) {
+              setError(cause instanceof Error ? cause.message : "刷新工单状态失败");
+              schedule();
+            }
+          });
+      }, delay);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [approval?.executionStatus, pollingStopped, refresh]);
+
+  const retryRefresh = useCallback(() => {
+    setLoading(true);
+    setPollingStopped(false);
+    void refresh()
+      .catch((cause) => {
+        setError(cause instanceof Error ? cause.message : "读取审批状态失败");
+      })
+      .finally(() => {
+        if (mountedRef.current) {
+          setLoading(false);
+        }
+      });
+  }, [refresh]);
 
   const act = useCallback(
     async (action: ApprovalAction) => {
@@ -116,11 +194,7 @@ export function TicketApprovalCard({ prompt }: { prompt: TicketApprovalPrompt })
         }
         const current = (await response.json()) as TicketApproval;
         setApproval(current);
-        // 确认接口只保证 Job 已持久化；立即读取一次可以快速接住已完成的本地 Worker，
-        // 尚未完成时再由上面的轮询继续等待。
-        if (current.executionStatus === "pending") {
-          await refresh();
-        }
+        setPollingStopped(false);
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "审批操作失败");
       } finally {
@@ -182,10 +256,27 @@ export function TicketApprovalCard({ prompt }: { prompt: TicketApprovalPrompt })
           确认已过期。请重新发送“帮我建个工单”生成新草稿。
         </p>
       ) : approval?.executionStatus === "pending" ? (
-        <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          已确认，正在创建工单…
-        </p>
+        pollingStopped ? (
+          <div className="mt-3 text-sm text-muted-foreground">
+            <p>工单仍在创建，自动刷新已暂停。</p>
+            {!error ? (
+              <Button
+                className="mt-2"
+                variant="outline"
+                size="xs"
+                disabled={loading}
+                onClick={retryRefresh}
+              >
+                刷新状态
+              </Button>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+            已确认，正在创建工单…
+          </p>
+        )
       ) : null}
 
       {error ? (
@@ -196,14 +287,7 @@ export function TicketApprovalCard({ prompt }: { prompt: TicketApprovalPrompt })
             variant="outline"
             size="xs"
             disabled={loading || Boolean(submitting)}
-            onClick={() => {
-              setLoading(true);
-              void refresh()
-                .catch((cause) => {
-                  setError(cause instanceof Error ? cause.message : "读取审批状态失败");
-                })
-                .finally(() => setLoading(false));
-            }}
+            onClick={retryRefresh}
           >
             重试
           </Button>

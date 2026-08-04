@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TicketApprovalCard } from "@/components/ticket-approval-card";
@@ -35,6 +35,7 @@ function approvalResponse(
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -68,7 +69,9 @@ describe("TicketApprovalCard", () => {
     fireEvent.click(confirm);
     fireEvent.click(confirm);
 
-    await waitFor(() => expect(screen.getByText("TK-20260804-0001")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("TK-20260804-0001")).toBeTruthy(), {
+      timeout: 3_000,
+    });
     const postCalls = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
     expect(postCalls).toHaveLength(1);
     expect(String(postCalls[0][0])).toContain("/api/ticket-approvals/approval_1/confirm");
@@ -120,5 +123,87 @@ describe("TicketApprovalCard", () => {
       expect(screen.getByText(/确认已过期.*重新发送/)).toBeTruthy(),
     );
     expect(screen.queryByRole("button", { name: "确认创建" })).toBeNull();
+  });
+
+  it("stops automatic polling after the bounded retry schedule", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      approvalResponse({ status: "approved", executionStatus: "pending" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<TicketApprovalCard prompt={prompt} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(screen.getByText("工单仍在创建，自动刷新已暂停。")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "刷新状态" })).toBeTruthy();
+    const callsAtStop = fetchMock.mock.calls.length;
+    expect(callsAtStop).toBeGreaterThan(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(callsAtStop);
+  });
+
+  it("ignores an older pending response after a newer refresh succeeds", async () => {
+    vi.useFakeTimers();
+    let getCalls = 0;
+    let resolveStale: ((response: Response) => void) | undefined;
+    const staleResponse = new Promise<Response>((resolve) => {
+      resolveStale = resolve;
+    });
+    const fetchMock = vi.fn<typeof fetch>(async () => {
+      getCalls += 1;
+      if (getCalls === 1) {
+        return approvalResponse({ status: "approved", executionStatus: "pending" });
+      }
+      if (getCalls === 2) {
+        throw new Error("temporary network error");
+      }
+      if (getCalls === 3) {
+        // 故意忽略 AbortSignal，模拟代理已经返回但旧响应在浏览器中延迟交付。
+        return staleResponse;
+      }
+      return approvalResponse({
+        status: "approved",
+        executionStatus: "succeeded",
+        ticket: { id: "ticket_1", number: "TK-NEWER" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<TicketApprovalCard prompt={prompt} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText("TK-NEWER")).toBeTruthy();
+
+    await act(async () => {
+      resolveStale?.(
+        approvalResponse({ status: "approved", executionStatus: "pending" }),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText("TK-NEWER")).toBeTruthy();
+    expect(screen.queryByText("已确认，正在创建工单…")).toBeNull();
   });
 });

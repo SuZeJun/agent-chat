@@ -39,7 +39,7 @@ function Section({
   );
 }
 
-/** 阶段 2 前工具与 Interrupt 尚未产生数据，明确标注空态而不是隐藏整节。 */
+/** 没有对应记录时保留明确空态，避免管理员把缺少数据误认为页面漏载。 */
 function EmptyState({ children }: { children: React.ReactNode }) {
   return <p className="text-xs text-muted-foreground">{children}</p>;
 }
