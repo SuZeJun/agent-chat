@@ -215,13 +215,22 @@ func getMessageHistoryHandler(service MessageHistoryReader) gin.HandlerFunc {
 	}
 }
 
-// publicMessageHistoryResult 只暴露客户恢复界面所需字段，不返回节点路径、工具原始结果等内部 Trace。
+// publicMessageHistoryResult 只暴露客户恢复界面所需字段，不返回节点路径、工具调用等内部 Trace。
 func publicMessageHistoryResult(result map[string]any) map[string]any {
 	if len(result) == 0 {
 		return nil
 	}
-	public := make(map[string]any, 3)
-	for _, field := range []string{"assessment", "citations", "nextAction"} {
+	public := make(map[string]any, 6)
+	// 工单草稿、审批 ID 与过期时间是刷新后恢复确认界面的必要契约；它们只描述
+	// 当前客户可见且即将执行的操作，不包含工具原始输出或内部节点信息。
+	for _, field := range []string{
+		"assessment",
+		"citations",
+		"nextAction",
+		"ticketDraft",
+		"approvalId",
+		"approvalExpiresAt",
+	} {
 		if value, exists := result[field]; exists {
 			public[field] = value
 		}

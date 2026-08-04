@@ -78,6 +78,33 @@ describe("reduceRunEvent", () => {
     expect(state.citations[0].sourceId).toBe("S1");
   });
 
+  it("从持久化事件恢复结构化工单草稿", () => {
+    const state = reduceAll([
+      event("approval.required", {
+        approvalId: "approval_1",
+        draft: {
+          title: "无法导出账单",
+          description: "点击导出后没有响应。",
+          priority: "high",
+        },
+        expiresAt: "2026-08-04T01:00:00Z",
+      }),
+      event("run.completed", { nextAction: "confirm_ticket" }, 2),
+    ]);
+
+    expect(state.stage).toBe("completed");
+    expect(state.nextAction).toBe("confirm_ticket");
+    expect(state.approval).toEqual({
+      approvalId: "approval_1",
+      draft: {
+        title: "无法导出账单",
+        description: "点击导出后没有响应。",
+        priority: "high",
+      },
+      expiresAt: "2026-08-04T01:00:00Z",
+    });
+  });
+
   it("记录失败错误码并停在失败阶段", () => {
     const state = reduceAll([
       event("run.started", { attempt: 1 }),

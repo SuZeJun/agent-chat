@@ -64,6 +64,38 @@ export type ApiErrorBody = {
   requestId: string;
 };
 
+export type TicketDraft = {
+  title: string;
+  description: string;
+  priority: "low" | "normal" | "high";
+};
+
+export type TicketApproval = {
+  approvalId: string;
+  status: "pending" | "approved" | "cancelled" | "expired";
+  draft: TicketDraft;
+  ticket?: { id: string; number: string };
+  executionStatus:
+    | "awaiting_confirmation"
+    | "pending"
+    | "cancelled"
+    | "expired"
+    | "succeeded";
+};
+
+export type TicketApprovalPrompt = {
+  approvalId: string;
+  draft: TicketDraft;
+  expiresAt?: string;
+};
+
+export type ToolCall = {
+  name: string;
+  status: string;
+  errorCode?: string;
+  durationMillis: number;
+};
+
 /** 管理员可见的 Run 执行步骤。 */
 export type RunTraceStep = {
   order: number;
@@ -84,6 +116,10 @@ export type RunResult = {
   nextAction?: NextAction;
   nodePath?: string[];
   citations?: Citation[];
+  toolCalls?: ToolCall[];
+  ticketDraft?: TicketDraft;
+  approvalId?: string;
+  approvalExpiresAt?: string;
   assessment?: {
     decision?: Decision;
     reason?: string;
@@ -117,6 +153,7 @@ export type RunTrace = {
   errorCode?: string;
   result: RunResult;
   steps: RunTraceStep[];
+  events: RunEvent[];
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
@@ -141,5 +178,6 @@ export type AssistantState = {
   nextAction?: NextAction;
   evidence: Evidence[];
   citations: Citation[];
+  approval?: TicketApprovalPrompt;
   errorCode?: string;
 };

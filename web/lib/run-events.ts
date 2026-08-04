@@ -5,6 +5,7 @@ import type {
   Evidence,
   NextAction,
   RunEvent,
+  TicketDraft,
 } from "@/lib/types";
 
 export function initialAssistantState(runId: string): AssistantState {
@@ -37,6 +38,23 @@ function toEvidence(value: unknown): Evidence[] {
       documentType: String(record.documentType ?? ""),
     };
   });
+}
+
+function toTicketDraft(value: unknown): TicketDraft | undefined {
+  const record = asRecord(value);
+  const priority = String(record.priority ?? "");
+  if (
+    typeof record.title !== "string" ||
+    typeof record.description !== "string" ||
+    !["low", "normal", "high"].includes(priority)
+  ) {
+    return undefined;
+  }
+  return {
+    title: record.title,
+    description: record.description,
+    priority: priority as TicketDraft["priority"],
+  };
 }
 
 /**
@@ -88,6 +106,23 @@ export function reduceRunEvent(
         return state;
       }
       return { ...state, citations: [...state.citations, citation] };
+    }
+
+    case "approval.required": {
+      const approvalId = String(payload.approvalId ?? "");
+      const draft = toTicketDraft(payload.draft);
+      if (!approvalId || !draft) {
+        return state;
+      }
+      return {
+        ...state,
+        approval: {
+          approvalId,
+          draft,
+          expiresAt:
+            typeof payload.expiresAt === "string" ? payload.expiresAt : undefined,
+        },
+      };
     }
 
     case "run.completed":

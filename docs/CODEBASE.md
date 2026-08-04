@@ -300,6 +300,19 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `internal/infrastructure/model/zhipu.go` | 将智谱 Embeddings API 适配为固定模型和维度的 Eino Embedder |
 | `internal/infrastructure/model/zhipu_test.go` | 验证批量向量顺序、模型覆盖保护和错误脱敏 |
 
+## Web 前端
+
+| 文件 | 职责 |
+| --- | --- |
+| `web/components/chat-panel.tsx` | 恢复客户会话、发送消息并按 Run 独立订阅 SSE |
+| `web/components/assistant-message.tsx` | 展示回答、引用、三类 Answerability 与工单审批入口 |
+| `web/components/ticket-approval-card.tsx` | 结构化展示草稿，按服务端状态确认、取消并轮询工单结果 |
+| `web/components/run-trace-view.tsx` | 展示节点、检索、Token、工具调用和审批事件时间线 |
+| `web/lib/run-events.ts` | 将有序 SSE 事件归约为可恢复的聊天状态 |
+| `web/lib/message-history.ts` | 将持久化消息与 Graph Result 恢复为聊天界面状态 |
+| `web/lib/ticket-approval-server.ts` | 注入客户身份并转发审批查询、确认与取消请求 |
+| `web/app/api/ticket-approvals/[approvalId]/` | 客户审批 BFF 路由，不接受客户端覆盖客户身份或草稿 |
+
 ## 开发脚本与 CI
 
 | 文件 | 职责 |

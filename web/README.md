@@ -12,7 +12,7 @@
            （注入 X-Customer-ID）
 ```
 
-对应的四个转发端点：
+主要转发端点：
 
 | 前端路由 | 后端端点 |
 | --- | --- |
@@ -20,6 +20,9 @@
 | `GET /api/conversations/{id}/messages` | 同名历史分页端点 |
 | `POST /api/conversations/{id}/messages` | 同名客户端点 |
 | `GET /api/agent-runs/{runId}/events` | 同名 SSE 端点（流式透传） |
+| `GET /api/ticket-approvals/{approvalId}` | 查询客户所属审批与工单状态 |
+| `POST /api/ticket-approvals/{approvalId}/confirm` | 确认草稿并持久化创建任务 |
+| `POST /api/ticket-approvals/{approvalId}/cancel` | 取消草稿，不产生工单副作用 |
 
 ## 本地运行
 
@@ -41,3 +44,5 @@ npm run dev
 
 浏览器按知识库将当前会话 ID 保存到 `localStorage`。刷新时只读取历史；若存在
 `pending` 或 `running` Run，页面按 `runId` 恢复每个 SSE 订阅，不会重新发送消息或创建新 Run。
+工单草稿从服务端历史恢复，确认与取消均以审批 API 的权威状态为准；确认后页面查询
+持久化 Job 的执行结果，只有服务端返回工单记录时才展示工单编号。

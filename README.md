@@ -1,6 +1,6 @@
 # Agent Chat
 
-面向企业客服与技术支持团队的 AI 服务运营平台。当前已完成 FAQ RAG 最小闭环，产品和架构设计见 `docs/`，代码入口和文件职责见 `docs/CODEBASE.md`。
+面向企业客服与技术支持团队的 AI 服务运营平台。当前已完成 FAQ RAG 与安全工单审批闭环，产品和架构设计见 `docs/`，代码入口和文件职责见 `docs/CODEBASE.md`。
 
 ## 当前能力
 
@@ -18,6 +18,9 @@
 - `agent.run` Handler 执行 RAG Graph，并原子保存 Assistant Message、Graph Result 和有序运行事件
 - FAQ CSV 内容幂等导入、逐行索引状态查询和客户隔离的聊天/SSE API
 - Eino Callback 节点、模型耗时和 Token Trace
+- 客户作用域的订阅查询只读工具，以及只生成草稿的 `draft_ticket` 写工具
+- 持久化工单审批、过期、确认/取消、幂等 `ticket.create` Job 与结构化确认界面
+- Run Trace 中的真实工具调用、审批状态流转与工单创建事件
 - 16 条实际执行 Eino Graph 的 pytest 离线安全评估，分数取自真实检索实测
 - 带 advisory lock、文件名和 SHA-256 校验的事务迁移
 - `/healthz` 与 `/readyz`
@@ -80,6 +83,9 @@ GET  /api/v1/conversations/{conversationId}/messages
 POST /api/v1/conversations/{conversationId}/messages
 GET  /api/v1/agent-runs/{runId}/events
 GET  /api/v1/admin/agent-runs/{runId}
+GET  /api/v1/ticket-approvals/{approvalId}
+POST /api/v1/ticket-approvals/{approvalId}/confirm
+POST /api/v1/ticket-approvals/{approvalId}/cancel
 ```
 
 FAQ 导入接口使用 `multipart/form-data` 的 `file` 字段。同一知识库重复上传规范化内容相同的 CSV 会返回原 `importId`，不会重复创建文档、版本或 Job。会话历史接口按 `before` 游标分页，并返回 Assistant Message 关联的 Answerability、引用和 Run 状态快照。SSE 使用持久化 `sequence` 作为 `id`，客户端可通过 `Last-Event-ID` 断线续传。
@@ -130,4 +136,6 @@ FAQ 导入与索引（已完成）
   -> Answerability Gate（已完成）
   -> 带引用 SSE 回答（已完成）
   -> Trace 与 Eval（已完成）
+  -> 只读工具（已完成）
+  -> 工单草稿、人工确认与幂等执行（已完成）
 ```
