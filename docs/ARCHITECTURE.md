@@ -224,8 +224,9 @@ Eino Retriever 边界：
 ### 5.3 Agent Graph
 
 当前 Graph 已实现知识问答子图 `Retrieve -> Answerability Gate -> Generate / Clarify / Refuse`，
-以及显式白名单工具的规划与工单草稿待确认分支。转人工节点按后续阶段接入，不为了展示
-框架提前放入空节点。
+以及显式白名单工具的规划与工单草稿待确认分支。不可回答分支输出
+`request_human_support` 策略动作；真正的状态切换、摘要持久化和授权仍由 Application
+用例执行，不让 Graph 直接写库。
 
 工具规划节点会读取源消息之前、由 Repository 在同一会话内查询的最近 12 条消息。
 历史先受数据库条数上限约束，再受 Graph 的 6000 字符预算裁剪；只保留最近内容，并作为
@@ -280,7 +281,7 @@ Worker 负责真正执行 Agent Graph，避免裸 goroutine 在服务重启时�
 4. 在同一事务中保存 Assistant Message、Graph Result、有序事件和 Run 终态。
 5. 可重试失败保持 Run 为 `running` 并等待 Job 重投；不可重试或耗尽次数后原子进入 `failed`。
 
-如果执行期间会话已转为 `human_active`，完成事务拒绝保存 AI 回答，防止客服接管后出现迟到消息。
+如果执行期间会话已转为 `waiting_human` 或 `human_active`，完成事务拒绝保存 AI 回答，防止转人工后出现迟到消息。
 
 ### 6.2 Job 状态
 
@@ -326,7 +327,7 @@ pending -> running -> succeeded
 
 - 消息入库、会话状态更新和 Agent Job 创建。
 - 审批确认、确认事件和 `ticket.create` Job 创建。
-- 转人工事件、会话状态更新和通知任务创建。
+- 转人工摘要、系统消息、会话状态和审计事件写入。
 - 文档版本创建和索引任务创建。
 
 当前聊天启动事务一次写入：
@@ -410,16 +411,19 @@ GET  /api/v1/conversations/{id}/events
 GET  /api/v1/ticket-approvals/{id}
 POST /api/v1/ticket-approvals/{id}/confirm
 POST /api/v1/ticket-approvals/{id}/cancel
-POST /api/v1/conversations/{id}/request-human
+POST /api/v1/conversations/{id}/handoff
+POST /api/v1/conversations/{id}/handoff/messages
 ```
 
 ### 8.2 客服端
 
 ```text
 GET  /api/v1/agent/conversations
+GET  /api/v1/agent/conversations/{id}
 POST /api/v1/agent/conversations/{id}/takeover
 POST /api/v1/agent/conversations/{id}/messages
 POST /api/v1/agent/conversations/{id}/resume-ai
+GET  /api/v1/agent/conversations/{id}/events
 ```
 
 ### 8.3 管理端

@@ -5,6 +5,7 @@ import { restoreMessageHistory } from "@/lib/message-history";
 describe("restoreMessageHistory", () => {
   it("restores completed answerability and citations without starting a run", () => {
     const restored = restoreMessageHistory({
+      conversationStatus: "ai_active",
       items: [
         {
           id: "message_customer",
@@ -59,6 +60,7 @@ describe("restoreMessageHistory", () => {
 
   it("resumes the existing pending run instead of creating another one", () => {
     const restored = restoreMessageHistory({
+      conversationStatus: "ai_active",
       items: [
         {
           id: "message_customer",
@@ -79,6 +81,7 @@ describe("restoreMessageHistory", () => {
 
   it("restores the persisted ticket approval instead of creating a new draft", () => {
     const restored = restoreMessageHistory({
+      conversationStatus: "ai_active",
       items: [
         {
           id: "message_assistant",
@@ -112,6 +115,7 @@ describe("restoreMessageHistory", () => {
 
   it("restores every active run so each one can resume independently", () => {
     const restored = restoreMessageHistory({
+      conversationStatus: "ai_active",
       items: [
         {
           id: "message_first",
@@ -145,6 +149,7 @@ describe("restoreMessageHistory", () => {
     ["unanswerable", "request_human_support"],
   ] as const)("restores the %s branch after refresh", (decision, nextAction) => {
     const restored = restoreMessageHistory({
+      conversationStatus: "ai_active",
       items: [
         {
           id: `assistant_${decision}`,
@@ -168,5 +173,20 @@ describe("restoreMessageHistory", () => {
       expect(assistant.state.decision).toBe(decision);
       expect(assistant.state.nextAction).toBe(nextAction);
     }
+  });
+
+  it("restores an agent reply as a distinct human-support message", () => {
+    const restored = restoreMessageHistory({
+      conversationStatus: "human_active",
+      items: [{
+        id: "agent-message-1",
+        role: "agent",
+        content: "我来协助处理。",
+        createdAt: "2026-08-04T00:00:01Z",
+      }],
+    });
+
+    expect(restored.items).toEqual([{ kind: "agent", id: "agent-message-1", content: "我来协助处理。" }]);
+    expect(restored.activeRunIds).toEqual([]);
   });
 });

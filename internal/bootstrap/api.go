@@ -94,6 +94,14 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	handoffService, err := chatapplication.NewHandoffService(
+		chatRepository,
+		chatIDGenerator,
+		chatClock,
+	)
+	if err != nil {
+		return err
+	}
 	ticketService, err := ticketapp.NewService(
 		ticketpg.NewRepository(runtime.database),
 		chatapplication.UUIDGenerator{},
@@ -116,6 +124,7 @@ func RunAPI(ctx context.Context, output io.Writer) error {
 		RunEvents:           eventService,
 		RunTrace:            traceService,
 		TicketApproval:      ticketService,
+		Handoff:             handoffService,
 	})
 	server := &http.Server{
 		Addr:              runtime.config.App.HTTPAddress,

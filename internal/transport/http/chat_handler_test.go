@@ -160,6 +160,7 @@ func TestSendMessageAPI(t *testing.T) {
 func TestGetMessageHistoryAPIUsesCustomerScopeAndReturnsRunResult(t *testing.T) {
 	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	reader := &fakeMessageHistoryReader{page: domain.MessageHistoryPage{
+		ConversationStatus: domain.ConversationStatusAIActive,
 		Items: []domain.MessageHistoryItem{
 			{
 				Message: domain.Message{

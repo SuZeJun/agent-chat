@@ -46,7 +46,7 @@ function RunProgress({ stage }: { stage: RunStage }) {
  * 三个分支必须视觉可区分，否则 Answerability 的判定对用户不可见，
  * 「澄清」会被误读成一个答得很差的回答。
  */
-function DecisionNotice({ state }: { state: AssistantState }) {
+function DecisionNotice({ state, onRequestHuman }: { state: AssistantState; onRequestHuman?: () => void }) {
   const clarification = state.decision === "needs_clarification";
   const Icon = clarification ? Info : AlertTriangle;
 
@@ -70,20 +70,17 @@ function DecisionNotice({ state }: { state: AssistantState }) {
       </p>
       <p className="mt-2 text-sm whitespace-pre-wrap">{state.answer}</p>
       {state.nextAction === "request_human_support" ? (
-        // 后端尚无转人工接口，人工接管属于阶段 2；此处保留入口但明确标注不可用，
-        // 避免出现点了没反应又没有任何解释的按钮。
         <div className="mt-3 flex items-center gap-2">
-          <Button variant="outline" size="sm" disabled>
+          <Button variant="outline" size="sm" onClick={onRequestHuman} disabled={!onRequestHuman}>
             联系人工支持
           </Button>
-          <span className="text-xs text-muted-foreground">人工接管将在后续阶段支持</span>
         </div>
       ) : null}
     </div>
   );
 }
 
-export function AssistantMessage({ state }: { state: AssistantState }) {
+export function AssistantMessage({ state, onRequestHuman }: { state: AssistantState; onRequestHuman?: () => void }) {
   if (state.stage === "failed") {
     return (
       <div className="max-w-[85%] rounded-lg border border-destructive/30 bg-destructive/5 p-3">
@@ -110,7 +107,7 @@ export function AssistantMessage({ state }: { state: AssistantState }) {
   if (state.decision && state.decision !== "answerable") {
     return (
       <div className="max-w-[85%]">
-        <DecisionNotice state={state} />
+        <DecisionNotice state={state} onRequestHuman={onRequestHuman} />
         <TraceLink runId={state.runId} />
       </div>
     );

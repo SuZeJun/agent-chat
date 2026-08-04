@@ -19,11 +19,12 @@ import (
 
 // evalCase 描述一个不依赖真实 Provider 的 RAG 路由评估样本。
 type evalCase struct {
-	Name     string    `json:"name"`
-	Query    string    `json:"query"`
-	Scores   []float64 `json:"scores"`
-	Decision string    `json:"decision"`
-	Reason   string    `json:"reason"`
+	Name       string    `json:"name"`
+	Query      string    `json:"query"`
+	Scores     []float64 `json:"scores"`
+	Decision   string    `json:"decision"`
+	Reason     string    `json:"reason"`
+	NextAction string    `json:"nextAction,omitempty"`
 }
 
 // caseResult 记录单个样本的实际决策、调用约束和失败原因。
@@ -34,6 +35,8 @@ type caseResult struct {
 	ActualDecision   string `json:"actualDecision"`
 	ExpectedReason   string `json:"expectedReason"`
 	ActualReason     string `json:"actualReason"`
+	ExpectedAction   string `json:"expectedAction,omitempty"`
+	ActualAction     string `json:"actualAction,omitempty"`
 	CitationCount    int    `json:"citationCount"`
 	ModelCalls       int    `json:"modelCalls"`
 	Error            string `json:"error,omitempty"`
@@ -190,6 +193,7 @@ func evaluate(item evalCase) caseResult {
 		Name:             item.Name,
 		ExpectedDecision: item.Decision,
 		ExpectedReason:   item.Reason,
+		ExpectedAction:   item.NextAction,
 	}
 	if err != nil {
 		result.Error = "runtime_build_failed"
@@ -202,6 +206,7 @@ func evaluate(item evalCase) caseResult {
 	}
 	result.ActualDecision = string(output.Assessment.Decision)
 	result.ActualReason = output.Assessment.Reason
+	result.ActualAction = string(output.NextAction)
 	result.CitationCount = len(output.Citations)
 	result.ModelCalls = chatModel.calls
 
@@ -214,6 +219,7 @@ func evaluate(item evalCase) caseResult {
 		(answerable && chatModel.calls == 1)
 	result.Passed = result.ActualDecision == item.Decision &&
 		result.ActualReason == item.Reason &&
+		(item.NextAction == "" || result.ActualAction == item.NextAction) &&
 		citationSafe &&
 		modelSafe
 	if !result.Passed {

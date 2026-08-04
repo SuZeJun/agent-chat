@@ -421,7 +421,7 @@ func TestCompleteRunRejectsConversationTakeover(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE conversations
-		SET status = 'human_active'
+		SET status = 'human_active', assigned_agent_id = 'agent-takeover'
 		WHERE id = 'conversation-takeover'
 	`); err != nil {
 		t.Fatalf("take over conversation: %v", err)

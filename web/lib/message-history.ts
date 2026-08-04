@@ -8,6 +8,7 @@ import type {
 export type ChatItem =
   | { kind: "customer"; id: string; content: string }
   | { kind: "assistant"; id: string; state: AssistantState }
+  | { kind: "agent"; id: string; content: string }
   | { kind: "notice"; id: string; content: string };
 
 export type RestoredHistory = {
@@ -91,7 +92,11 @@ export function restoreMessageHistory(page: MessageHistoryResponse): RestoredHis
       continue;
     }
 
-    items.push({ kind: "notice", id: item.id, content: item.content });
+    items.push({
+      kind: item.role === "agent" ? "agent" : "notice",
+      id: item.id,
+      content: item.content,
+    });
   }
 
   return {

@@ -9,12 +9,14 @@
 export type ServerConfig = {
   apiBaseUrl: string;
   customerId: string;
+  agentId: string;
   adminId: string;
   knowledgeBaseId: string;
   knowledgeBaseName: string;
 };
 
 export type AdminServerConfig = Pick<ServerConfig, "apiBaseUrl" | "adminId">;
+export type AgentServerConfig = Pick<ServerConfig, "apiBaseUrl" | "agentId">;
 
 function requireEnv(key: string): string {
   const value = process.env[key]?.trim();
@@ -40,8 +42,18 @@ export function readServerConfig(): ServerConfig {
   return {
     ...admin,
     customerId: process.env.DEMO_CUSTOMER_ID?.trim() || "demo-customer",
+    agentId: process.env.DEMO_AGENT_ID?.trim() || "demo-agent",
     // 客户聊天固定绑定服务端配置的知识库；管理员列表不会改变客户资源作用域。
     knowledgeBaseId: requireEnv("KNOWLEDGE_BASE_ID"),
     knowledgeBaseName: process.env.KNOWLEDGE_BASE_NAME?.trim() || "演示知识库",
+  };
+}
+
+/** readAgentServerConfig 只向客服 BFF 暴露服务端演示身份。 */
+export function readAgentServerConfig(): AgentServerConfig {
+  const config = readAdminServerConfig();
+  return {
+    apiBaseUrl: config.apiBaseUrl,
+    agentId: process.env.DEMO_AGENT_ID?.trim() || "demo-agent",
   };
 }

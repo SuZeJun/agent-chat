@@ -117,6 +117,8 @@ internal/agent/tool/ticket.go
 | `internal/transport/http/chat_handler_test.go` | 验证历史作用域、分页参数、Run Result DTO 与聊天接口 |
 | `internal/transport/http/ticket_handler.go` | 查询、确认和取消客户所属的工单审批 |
 | `internal/transport/http/ticket_handler_test.go` | 验证异步确认、完成查询和过期错误映射 |
+| `internal/transport/http/handoff_handler.go` | 提供客户转人工、客服队列、接管、回复、恢复 AI 和增量事件 API |
+| `internal/transport/http/handoff_handler_test.go` | 验证客户/客服身份作用域、事件游标和客服标识隐私边界 |
 
 ## PostgreSQL Persistence
 
@@ -144,6 +146,7 @@ internal/agent/tool/ticket.go
 | `internal/domain/chat/doc.go` | Chat Domain 包职责说明 |
 | `internal/domain/chat/model.go` | 定义会话、消息、Agent Run、运行事件、状态和原子提交契约 |
 | `internal/domain/chat/history.go` | 定义客户作用域历史查询、消息与 Run 恢复快照及分页契约 |
+| `internal/domain/chat/handoff.go` | 定义接管摘要、审计事件及确定性摘要生成规则 |
 | `internal/domain/chat/repository.go` | 定义会话创建和消息启动 Run 的持久化 Port |
 | `internal/domain/chat/model_test.go` | 验证聊天状态、关联 ID 和初始事件约束 |
 
@@ -188,6 +191,7 @@ internal/agent/tool/ticket.go
 | `internal/application/chat/history.go` | 校验客户作用域并读取可恢复 Answerability 与引用的消息历史 |
 | `internal/application/chat/conversation.go` | 创建绑定当前客户和知识库的 AI 会话 |
 | `internal/application/chat/events.go` | 在客户范围内增量读取 Run Event |
+| `internal/application/chat/handoff.go` | 编排主动转人工、队列、原子接管、人工消息和恢复 AI 用例 |
 | `internal/application/chat/trace.go` | 读取管理员可见的脱敏 Run Trace |
 
 ## Ticket Application
@@ -244,6 +248,8 @@ internal/agent/tool/ticket.go
 | `internal/infrastructure/persistence/chat/history_integration_test.go` | 真库验证客户隔离、游标分页、结果恢复与重试历史边界 |
 | `internal/infrastructure/persistence/chat/events.go` | 按客户范围和 sequence 查询 SSE 事件 |
 | `internal/infrastructure/persistence/chat/trace.go` | 查询 Run 关联 ID、Graph Result 和节点 Trace |
+| `internal/infrastructure/persistence/chat/handoff.go` | 在会话行锁内实现接管状态机、摘要、人工消息和连续审计事件 |
+| `internal/infrastructure/persistence/chat/handoff_integration_test.go` | 真库验证主动转接、并发认领、权限隔离、恢复 AI 和整笔回滚 |
 
 ## Ticket Persistence
 
@@ -295,6 +301,7 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `migrations/000006_agent_run_trace.sql` | 增加 Request ID 和节点/模型 Trace 表 |
 | `migrations/000007_ticket_approvals.sql` | 创建工单审批、工单记录和写操作安全约束 |
 | `migrations/000008_ticket_approval_events.sql` | 扩展审批与工单 Run Event 类型约束 |
+| `migrations/000009_handoff.sql` | 增加客服分配、接管摘要和会话审计事件表及约束 |
 
 已经提交或执行的迁移文件不可直接改写；后续 Schema 变化必须新增版本文件。
 
@@ -313,6 +320,7 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | 文件 | 职责 |
 | --- | --- |
 | `web/components/chat-panel.tsx` | 恢复客户会话、发送消息并按 Run 独立订阅 SSE |
+| `web/components/agent-handoff-workspace.tsx` | 展示人工队列、结构化摘要、历史、接管、回复与恢复 AI |
 | `web/components/faq-admin-panel.tsx` | 选择知识库、校验并上传 CSV，以 TanStack Table 展示逐行索引状态 |
 | `web/components/markdown-document-panel.tsx` | 创建 Markdown 文档与新版本，展示索引/活动状态并重试失败版本 |
 | `web/components/assistant-message.tsx` | 展示回答、引用、三类 Answerability 与工单审批入口 |
@@ -321,10 +329,12 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `web/lib/run-events.ts` | 将有序 SSE 事件归约为可恢复的聊天状态 |
 | `web/lib/message-history.ts` | 将持久化消息与 Graph Result 恢复为聊天界面状态 |
 | `web/lib/ticket-approval-server.ts` | 注入客户身份并转发审批查询、确认与取消请求 |
+| `web/lib/handoff-server.ts` | 注入客户或客服身份并限时转发人工接管请求 |
 | `web/lib/knowledge-admin-server.ts` | 注入管理员身份并限时转发知识库、FAQ 与 Markdown 管理请求 |
 | `web/lib/bounded-request.ts` | 在 BFF 解析前以流式读取限制上传请求体大小 |
 | `web/app/api/ticket-approvals/[approvalId]/` | 客户审批 BFF 路由，不接受客户端覆盖客户身份或草稿 |
 | `web/app/admin/knowledge/page.tsx` | FAQ/Markdown 知识管理与索引状态页面 |
+| `web/app/agent/page.tsx` | 客服人工接管工作台入口 |
 
 ## 开发脚本与 CI
 

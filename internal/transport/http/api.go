@@ -13,6 +13,7 @@ import (
 
 const (
 	adminIDHeader    = "X-Admin-ID"
+	agentIDHeader    = "X-Agent-ID"
 	customerIDHeader = "X-Customer-ID"
 	maxJSONBodyBytes = 64 << 10
 )
