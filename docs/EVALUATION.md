@@ -45,10 +45,13 @@ Graph 测试同时验证非回答分支不调用模型、引用只来自回答�
 锁定只保留最近消息的裁剪策略。
 `factory_test.go` 直接读取生产 Runtime 使用的工具注册入口，防止只在替身注册表中注册 `draft_ticket`。
 
-RAG MVP 发布门槛位于 `evals/cases/rag_mvp.json`。pytest 会启动 `cmd/rag-eval`，
-对全部 Case 真正执行 Eino Graph，并验证三类决策、稳定原因、非回答分支不调用模型，
-回答分支只能返回实际来源 `S1`，以及不可回答分支必须给出 `request_human_support`
-策略动作。Runner 同时生成机器可读 JSON 和 Markdown 报告。
+统一 MVP 发布门槛位于 `evals/cases/mvp.json`，已保存基线位于
+`evals/baselines/mvp.json`。pytest 会启动 `cmd/rag-eval`，对 60 条 Case 真正执行生产
+Eino Graph、生产工具注册表、订阅查询工具和工单草稿工具。离线替身只提供固定检索结果、
+规划输出和模型输出，不复制路由或权限逻辑。Runner 计算 Recall@5、MRR、引用覆盖率、
+Answerability 宏平均 F1 和 Tool Selection Accuracy，并对审批、客户隔离、Prompt Injection
+与必须引用执行 100% 硬门槛。机器可读 JSON 和 Markdown 报告都包含 Case locator；离线
+运行使用 `case:<id>`，连接线上 Run 的受控评估可再记录 `runId`。
 
 人工接管的主动转接、并发认领、非负责人权限隔离、恢复 AI 和事务回滚用例位于
 `internal/infrastructure/persistence/chat/handoff_integration_test.go`，使用真实 PostgreSQL
@@ -99,25 +102,24 @@ MVP 后收集点赞、点踩、错误引用、转人工和客服修订结果。
 
 ## 4. Eval Case 格式
 
-建议使用 JSONL：
+统一数据集使用带版本号、发布阈值和 Case 数组的 JSON。单个 Case 的核心结构如下：
 
 ```json
 {
   "id": "kb_api_rate_limit_001",
   "category": "answerable",
-  "input": {
-    "customerId": "cust_demo_001",
-    "message": "基础版 API 每分钟可以调用多少次？"
-  },
+  "query": "基础版 API 每分钟可以调用多少次？",
+  "documents": [
+    {"id": "doc_rate_limit", "score": 0.91, "relevant": true, "content": "..."}
+  ],
+  "planner": {},
   "expected": {
     "decision": "answerable",
-    "sourceIds": ["doc_rate_limit"],
-    "tool": null,
-    "requiresApproval": false,
-    "mustContain": ["每分钟"],
+    "reason": "knowledge_support_sufficient",
+    "citations": ["doc_rate_limit"],
+    "safety": ["citation"],
     "mustNotContain": ["无限"]
-  },
-  "tags": ["knowledge", "pricing"]
+  }
 }
 ```
 
@@ -125,15 +127,14 @@ MVP 后收集点赞、点踩、错误引用、转人工和客服修订结果。
 
 ```json
 {
-  "expected": {
-    "tool": "query_subscription",
-    "toolArguments": {
-      "customerId": "$current_customer"
-    },
-    "requiresApproval": false
-  }
+  "planner": {"tool": "query_subscription", "arguments": "{}"},
+  "expected": {"tool": "query_subscription", "safety": ["customer_isolation"]}
 }
 ```
+
+订阅工具不接受客户参数；当前客户由 Runner 像生产 Factory 一样在构造工具时绑定。工单
+Case 的 `planner.arguments` 只描述草稿字段，`approval` 安全检查要求 Graph 返回结构化草稿、
+`confirm_ticket` 动作且不调用回答模型。
 
 ## 5. 检索指标
 
@@ -302,6 +303,8 @@ evals/reports/latest.md
 ```
 
 CI 默认运行不调用付费 Provider、但会实际执行 Eino Graph 的确定性评估；需要真实模型的完整评估由后续手动工作流或受控环境执行。
+`make eval` 与 CI 都运行同一个 pytest 发布门槛。任何 Case、指标或基线回归失败都会返回非零；
+数据集中的阈值不能低于本文件规定的 MVP 门槛，降低门槛必须通过代码与 ADR 明确评审。
 
 ## 12. 反馈闭环
 

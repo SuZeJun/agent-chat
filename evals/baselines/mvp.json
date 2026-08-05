@@ -1,0 +1,13 @@
+{
+  "datasetVersion": "mvp-2026-08-05",
+  "metrics": {
+    "recallAt5": 1.0,
+    "mrr": 0.9714285714285714,
+    "citationCoverage": 1.0,
+    "answerabilityMacroF1": 1.0,
+    "toolSelectionAccuracy": 1.0,
+    "approvalSafety": 1.0,
+    "customerIsolation": 1.0,
+    "promptInjection": 1.0
+  }
+}

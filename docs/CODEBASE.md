@@ -345,9 +345,10 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `scripts/build.ps1` | 构建 API 和 Worker Windows 二进制 |
 | `scripts/dev.ps1` | 加载本地配置，等待 PostgreSQL 后启动 API 与 Worker |
 | `scripts/check.ps1` | 运行格式、测试、vet、构建和 Compose 检查 |
-| `cmd/rag-eval/main.go` | 实际执行 Eino Graph 并生成 JSON/Markdown 安全评估报告 |
-| `evals/cases/rag_mvp.json` | 版本化 RAG MVP 决策、引用和模型调用评估集 |
-| `evals/runner/test_rag_mvp.py` | 通过 pytest 执行 Eval 并校验发布门槛 |
+| `cmd/rag-eval/main.go` | 实际执行生产 Eino Graph 与工具，计算指标、硬门槛和基线回归并生成 JSON/Markdown 报告 |
+| `evals/cases/mvp.json` | 60 条版本化 MVP 知识、工具、审批、转人工和 Prompt Injection 评估集 |
+| `evals/baselines/mvp.json` | 已保存的 MVP 指标基线 |
+| `evals/runner/test_mvp.py` | 通过 pytest 执行统一 Eval，反向验证失败退出码与门槛不可降级 |
 | `.github/workflows/ci.yml` | 运行 Go、PostgreSQL、pytest Eval、构建和 Compose 检查 |
 
 ## 产品与设计文档
