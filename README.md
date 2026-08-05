@@ -2,6 +2,46 @@
 
 面向企业客服与技术支持团队的 AI 服务运营平台。当前已完成 FAQ RAG、安全工单审批和人工接管闭环，产品和架构设计见 `docs/`，代码入口和文件职责见 `docs/CODEBASE.md`。
 
+## 问题与方案
+
+企业客服机器人最危险的不是“答不上来”，而是在知识不足时编造答案、越权读取客户数据，
+或未经确认执行写操作。Agent Chat 把这些风险变成可测试的工程边界：
+
+- 企业知识经过版本化索引与 pgvector 检索，回答必须引用实际进入上下文的来源。
+- Answerability Gate 在生成前决定回答、追问或拒答，不把“检索非空”当成可回答。
+- 只读工具由服务端绑定客户；工单只生成草稿，持久化审批确认后才由幂等 Job 执行。
+- AI 无法处理或客户主动要求时进入人工队列，客服接管后 AI 自动停止回复。
+- 每次运行保留节点、检索、工具、审批、Token 和耗时 Trace，并由 60 条 Eval 回归。
+
+```text
+Next.js 客户端 / 客服工作台 / 管理后台
+                    │
+                    ▼
+              Go + Gin API
+                    │
+      ┌─────────────┼─────────────┐
+      ▼             ▼             ▼
+ PostgreSQL     持久化 Job     Eino Graph
+ + pgvector      Worker       │  │  │
+                              RAG 工具 人工确认
+```
+
+## 可量化结果
+
+| 项目 | 当前结果 |
+| --- | ---: |
+| 版本化 MVP Eval | 60 条 |
+| Recall@5 | 1.0000（门槛 0.85） |
+| Answerability Macro F1 | 1.0000（门槛 0.80） |
+| Tool Selection Accuracy | 1.0000（门槛 0.90） |
+| 引用、审批、客户隔离、Prompt Injection | 100% 硬门槛 |
+| MRR | 0.9714 |
+| 本地非模型 API 最大 P95 | 24.84 ms（门槛 300 ms） |
+
+以上是确定性离线发布门槛，不冒充真实 Provider 的语言质量评分。真实非模型 API 性能通过
+`scripts/benchmark.py` 在目标环境采样，当前报告见
+[`docs/reports/performance.md`](docs/reports/performance.md)。
+
 ## 当前能力
 
 - Go API 与 Worker 双进程入口
@@ -33,9 +73,32 @@
 
 Worker 只领取已注册的 Job 类型，避免新旧版本部署期间误消费尚未支持的任务。配置 `EMBEDDING_API_KEY` 后会注册 `knowledge.index` Handler；同时配置 `LLM_API_KEY` 和 `EMBEDDING_API_KEY` 后会注册 `agent.run` Handler。开发环境缺少相应 Key 时 Worker 仍可启动，但对应任务保持 `pending` 并记录 disabled 原因。
 
-## 本地启动
+## Docker Compose 一键启动
 
-启动并等待 PostgreSQL 健康：
+需要 Docker Compose，以及用于完整 RAG 演示的 DeepSeek 与智谱 API Key。复制配置并填写
+两个 Key；不要提交 `.env`：
+
+```bash
+cp .env.example .env
+docker compose up -d --build --wait
+```
+
+Compose 会依次启动 PostgreSQL、API、Worker，幂等创建 SaaS 演示知识库并导入 10 条 FAQ，
+最后启动 Web。无需手改数据库，也无需复制随机知识库 ID。
+
+打开：
+
+- 客户聊天：http://127.0.0.1:3000
+- 知识管理：http://127.0.0.1:3000/admin/knowledge
+- 客服工作台：http://127.0.0.1:3000/agent
+- API 就绪检查：http://127.0.0.1:8080/readyz
+
+首次启动后先在知识管理页等待 10 条 FAQ 变为“已就绪”，再进行问答。完整的 15 分钟
+启动、八步演示、性能取证和故障排查见 [`docs/DELIVERY.md`](docs/DELIVERY.md)。
+
+## 源码开发启动
+
+只启动 PostgreSQL：
 
 ```bash
 docker compose up -d --wait postgres
@@ -140,6 +203,8 @@ go vet ./...
 go build ./cmd/api
 go build ./cmd/worker
 python -m pytest evals/runner
+python -m unittest discover -s demo -p "test_*.py"
+python -m unittest discover -s scripts -p "test_*.py"
 docker compose config --quiet
 ```
 
