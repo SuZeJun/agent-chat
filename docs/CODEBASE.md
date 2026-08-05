@@ -77,10 +77,12 @@ internal/agent/tool/ticket.go
 | `.env.example` | 可提交的本地环境变量示例 |
 | `.gitignore` | 排除密钥、缓存、构建产物和 IDE 配置 |
 | `.gitattributes` | 固定迁移 SQL 的跨平台换行规则 |
+| `.dockerignore` | 排除密钥、缓存、前端依赖和构建产物，缩小后端镜像上下文 |
+| `Dockerfile` | 构建 API 与 Worker 共用的非 root 运行镜像 |
 | `go.mod` | Go 模块名称、Go 版本和直接依赖 |
 | `go.sum` | Go 依赖完整性校验 |
 | `Makefile` | POSIX 环境下的开发、测试和构建入口 |
-| `docker-compose.yml` | 本地 pgvector PostgreSQL 服务 |
+| `docker-compose.yml` | 一键启动 PostgreSQL、API、Worker、幂等演示 Seed 和 Web |
 
 ## 进程入口
 
@@ -335,6 +337,8 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `web/app/api/ticket-approvals/[approvalId]/` | 客户审批 BFF 路由，不接受客户端覆盖客户身份或草稿 |
 | `web/app/admin/knowledge/page.tsx` | FAQ/Markdown 知识管理与索引状态页面 |
 | `web/app/agent/page.tsx` | 客服人工接管工作台入口 |
+| `web/Dockerfile` | 构建 Next.js standalone 非 root 运行镜像 |
+| `web/lib/demo-knowledge-base-server.ts` | 在服务端按显式 ID 或唯一名称确定演示聊天知识库 |
 
 ## 开发脚本与 CI
 
@@ -345,6 +349,9 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `scripts/build.ps1` | 构建 API 和 Worker Windows 二进制 |
 | `scripts/dev.ps1` | 加载本地配置，等待 PostgreSQL 后启动 API 与 Worker |
 | `scripts/check.ps1` | 运行格式、测试、vet、构建和 Compose 检查 |
+| `scripts/benchmark.py` | 对真实非模型 API 采样并生成 P95 性能报告 |
+| `demo/seed.py` | 通过管理 API 幂等创建演示知识库并导入 FAQ |
+| `demo/saas-api-faq.csv` | SaaS API 演示知识语料 |
 | `cmd/rag-eval/main.go` | 实际执行生产 Eino Graph 与工具，计算指标、硬门槛和基线回归并生成 JSON/Markdown 报告 |
 | `evals/cases/mvp.json` | 60 条版本化 MVP 知识、工具、审批、转人工和 Prompt Injection 评估集 |
 | `evals/baselines/mvp.json` | 已保存的 MVP 指标基线 |
@@ -362,6 +369,8 @@ Worker 只领取 Bootstrap 已注册的 Job 类型。开发环境缺少 `EMBEDDI
 | `docs/EVALUATION.md` | RAG、Agent 和安全能力的评估方案 |
 | `docs/ROADMAP.md` | 项目阶段和交付顺序 |
 | `docs/CODEBASE.md` | 当前代码目录和文件职责导航 |
+| `docs/DELIVERY.md` | 15 分钟一键启动、八步演示、发布证据和录屏安全清单 |
+| `docs/reports/performance.*` | 真实启动 API 的非模型端点性能取证（JSON 与 Markdown） |
 
 ## 不应提交的目录
 

@@ -18,14 +18,6 @@ export type ServerConfig = {
 export type AdminServerConfig = Pick<ServerConfig, "apiBaseUrl" | "adminId">;
 export type AgentServerConfig = Pick<ServerConfig, "apiBaseUrl" | "agentId">;
 
-function requireEnv(key: string): string {
-  const value = process.env[key]?.trim();
-  if (!value) {
-    throw new Error(`缺少环境变量 ${key}，请参考 web/.env.example 配置`);
-  }
-  return value;
-}
-
 /** readAdminServerConfig 不依赖客户聊天的知识库绑定，可用于空环境知识管理。 */
 export function readAdminServerConfig(): AdminServerConfig {
   return {
@@ -44,8 +36,10 @@ export function readServerConfig(): ServerConfig {
     customerId: process.env.DEMO_CUSTOMER_ID?.trim() || "demo-customer",
     agentId: process.env.DEMO_AGENT_ID?.trim() || "demo-agent",
     // 客户聊天固定绑定服务端配置的知识库；管理员列表不会改变客户资源作用域。
-    knowledgeBaseId: requireEnv("KNOWLEDGE_BASE_ID"),
-    knowledgeBaseName: process.env.KNOWLEDGE_BASE_NAME?.trim() || "演示知识库",
+    // 显式 ID 优先；Compose 演示环境留空时由服务端按唯一名称解析 seed 创建的知识库。
+    knowledgeBaseId: process.env.KNOWLEDGE_BASE_ID?.trim() || "",
+    knowledgeBaseName:
+      process.env.KNOWLEDGE_BASE_NAME?.trim() || "Agent Chat SaaS 演示知识库",
   };
 }
 

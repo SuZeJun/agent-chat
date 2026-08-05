@@ -36,15 +36,17 @@
 
 ## 本地运行
 
-先按仓库根目录说明启动 PostgreSQL、Go API 和 Worker，然后：
+推荐在仓库根目录使用 `docker compose up -d --build --wait` 启动全栈并自动导入演示 FAQ。
+源码开发时，先按根目录说明启动 PostgreSQL、Go API 和 Worker，然后：
 
 ```bash
-cp .env.example .env.local   # 填入 KNOWLEDGE_BASE_ID
+cp .env.example .env.local
 npm install
 npm run dev
 ```
 
-客户聊天仍要求 `KNOWLEDGE_BASE_ID`，资源作用域只能由服务端配置指定。管理员可访问
+显式 `KNOWLEDGE_BASE_ID` 优先；留空时服务端按 `KNOWLEDGE_BASE_NAME` 解析唯一 active
+知识库，缺失或重名都会拒绝创建会话。资源作用域始终由服务端决定。管理员可访问
 `/admin/knowledge` 列出知识库、上传 FAQ CSV 并观察每行索引状态；客服使用
 `DEMO_AGENT_ID` 绑定演示身份，并从 `/agent` 进入人工接管工作台。
 

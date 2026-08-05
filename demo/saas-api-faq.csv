@@ -1,0 +1,11 @@
+question,answer,source_url
+如何重置密码？,进入账户安全设置，完成邮箱验证后选择“重置密码”。,https://docs.example.com/account/password-reset
+免费版每月有多少 API 调用额度？,免费版每月包含 1000 次 API 调用，额度在每个计费周期开始时重置。,https://docs.example.com/plans/free
+支持哪些付款方式？,企业客户可以使用信用卡或企业网银付款。,https://docs.example.com/billing/payment-methods
+怎样导出账单？,管理员可以在账单页面选择月份，并导出 CSV 或 PDF。,https://docs.example.com/billing/export
+Webhook 失败后会重试吗？,Webhook 投递失败后最多重试三次，每次请求都携带 HMAC 签名。,https://docs.example.com/api/webhooks
+如何创建 API Key？,进入开发者设置创建 API Key；密钥只在创建时完整显示一次。,https://docs.example.com/api/keys
+企业版支持单点登录吗？,企业版支持 SAML 单点登录，启用前需要验证企业域名并上传身份提供商元数据。,https://docs.example.com/security/sso
+审计日志保存多久？,企业版审计日志保存 180 天，管理员可从安全中心导出 JSON。,https://docs.example.com/security/audit-log
+单个文件上传上限是多少？,单个文件上传上限为 50 MB。,https://docs.example.com/files/upload-limits
+删除项目后还能恢复吗？,删除的项目会在回收站保留 30 天，只有组织管理员可以恢复。,https://docs.example.com/projects/recovery
