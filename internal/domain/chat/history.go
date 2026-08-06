@@ -39,8 +39,9 @@ func (query MessageHistoryQuery) Validate() error {
 
 // MessageHistoryItem 是一条消息及其关联 Run 的可恢复快照。
 //
-// 客户消息携带其触发 Run 的状态，页面刷新后可以继续订阅 pending/running Run；
-// Assistant 消息还携带最终 Result，以恢复引用和 Answerability 呈现。
+// 客户消息在 AI 模式下携带其触发 Run 的状态，页面刷新后可以继续订阅 pending/running
+// Run；人工接管期间客户消息不触发 Run，因此没有关联快照。Assistant 消息还携带最终
+// Result，以恢复引用和 Answerability 呈现。
 type MessageHistoryItem struct {
 	Message      Message
 	RunID        string
@@ -55,8 +56,9 @@ func (item MessageHistoryItem) Validate() error {
 		return err
 	}
 	if strings.TrimSpace(item.RunID) == "" {
-		if item.Message.Role == MessageRoleCustomer || item.Message.Role == MessageRoleAssistant {
-			return errors.New("customer and assistant history must reference an agent run")
+		// 人工接管期间客户消息不触发 Run，只有 Assistant 消息必然由 Run 产生。
+		if item.Message.Role == MessageRoleAssistant {
+			return errors.New("assistant history must reference an agent run")
 		}
 		if item.RunStatus != "" || item.RunResult != nil || item.RunErrorCode != "" {
 			return errors.New("history without a run contains run fields")
