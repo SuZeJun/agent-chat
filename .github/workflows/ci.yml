@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+  # 手动触发：平台故障导致 push 事件未产生 run 时，可在 Actions 页面补跑。
+  workflow_dispatch:
 
 permissions:
   contents: read
