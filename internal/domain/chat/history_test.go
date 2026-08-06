@@ -28,6 +28,36 @@ func TestMessageHistoryItemValidatesRunRelationship(t *testing.T) {
 	if err := item.Validate(); err == nil {
 		t.Fatal("assistant item accepted a mismatched Run")
 	}
+
+	item.RunID = ""
+	item.RunStatus = ""
+	item.RunResult = nil
+	if err := item.Validate(); err == nil {
+		t.Fatal("assistant item accepted a missing Run")
+	}
+}
+
+// 人工接管期间客户消息不触发 Run，历史仍必须可加载。
+func TestMessageHistoryItemAcceptsCustomerMessageWithoutRun(t *testing.T) {
+	now := time.Now().UTC()
+	item := MessageHistoryItem{
+		Message: Message{
+			ID:              "customer-1",
+			ConversationID:  "conversation-1",
+			ClientMessageID: "client-1",
+			Role:            MessageRoleCustomer,
+			Content:         "那我等人工回复",
+			CreatedAt:       now,
+		},
+	}
+	if err := item.Validate(); err != nil {
+		t.Fatalf("customer message during human handoff rejected: %v", err)
+	}
+
+	item.RunStatus = RunStatusCompleted
+	if err := item.Validate(); err == nil {
+		t.Fatal("history without a Run accepted Run fields")
+	}
 }
 
 func TestRunSourceRejectsHistoryOutsideSourceBoundary(t *testing.T) {

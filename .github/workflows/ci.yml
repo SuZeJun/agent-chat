@@ -106,6 +106,39 @@ jobs:
           docker compose ps
           docker compose logs --no-color demo-seed
 
+      # 首页在知识库解析失败时仍渲染引导页并返回 200，健康检查抓不到真实故障，
+      # 因此这里跑一遍真实写操作：建会话 -> 转人工 -> 人工态发消息 -> 重新拉历史。
+      # 人工接管期间客户消息不触发 Agent Run，整段无需任何模型 API Key。
+      - name: Verify customer conversation flow
+        env:
+          POSTGRES_PORT: 5434
+        run: |
+          set -euo pipefail
+          api=http://127.0.0.1:8080
+          # 经 web BFF 创建，同时校验服务端按唯一名称解析演示知识库。
+          conversation="$(curl --fail --silent --show-error \
+            -X POST http://127.0.0.1:3000/api/conversations \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+          echo "conversation: $conversation"
+          curl --fail --silent --show-error --output /dev/null \
+            "$api/api/v1/conversations/$conversation/messages?limit=50" \
+            -H "X-Customer-ID: demo-customer"
+          curl --fail --silent --show-error --output /dev/null \
+            -X POST "$api/api/v1/conversations/$conversation/handoff" \
+            -H "Content-Type: application/json" -H "X-Customer-ID: demo-customer" \
+            -d '{"reason":"ci smoke"}'
+          curl --fail --silent --show-error --output /dev/null \
+            -X POST "$api/api/v1/agent/conversations/$conversation/takeover" \
+            -H "Content-Type: application/json" -H "X-Agent-ID: demo-agent" -d '{}'
+          curl --fail --silent --show-error --output /dev/null \
+            -X POST "$api/api/v1/conversations/$conversation/handoff/messages" \
+            -H "Content-Type: application/json" -H "X-Customer-ID: demo-customer" \
+            -d '{"clientMessageId":"ci-1","content":"人工态下的客户消息"}'
+          # 回归点：人工接管后客户消息没有 Agent Run，历史仍必须可加载。
+          curl --fail --silent --show-error --output /dev/null \
+            "$api/api/v1/conversations/$conversation/messages?limit=50" \
+            -H "X-Customer-ID: demo-customer"
+
       - name: Dump deployment stack logs
         if: failure()
         env:
